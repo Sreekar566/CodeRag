@@ -22,8 +22,8 @@ def filter_files(tree: list[dict]) -> list[dict]:
         if any(path.endswith(ext) for ext in NOISE_EXTENSIONS):
             continue
 
-        if MAX_FILE_SIZE is not None and f["size"] > MAX_FILE_SIZE:
-                    continue
+        if MAX_FILE_SIZE is not None and f.get("size") is not None and f["size"] > MAX_FILE_SIZE:
+            continue
         
         kept.append(f)
 
