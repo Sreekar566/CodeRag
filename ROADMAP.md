@@ -61,9 +61,14 @@ complete unless explicitly confirmed below.
 - Verified end-to-end against all 54 filtered microblog files: no
   crashes, no gaps in line coverage between chunks
 
-### ⬜ Phase 3 — Embedding layer
+### 🟨 Phase 3 — Embedding layer (in progress)
 Turn code chunks into vectors + metadata (file path, line numbers,
 language)
+- `src/embedding/embedder.py` written: `embed_chunks(chunks)` using
+  `flax-sentence-embeddings/st-codesearch-distilroberta-base`
+  (switched from `jinaai/jina-embeddings-v2-base-code`, whose
+  `trust_remote_code` loading path deadlocked)
+- Not yet verified end-to-end; `language` metadata not yet added
 
 ### ⬜ Phase 4 — Vector DB storage & semantic retrieval
 
@@ -88,17 +93,20 @@ Retrieval accuracy, hallucination rate against benchmark Q&A pairs
 
 ## Tech Stack
 - **Confirmed:** Python, GitHub REST API, venv
-- **Not yet locked in:** embedding model, vector DB (candidates:
+- **Embedding model:** `flax-sentence-embeddings/st-codesearch-distilroberta-base`
+  via sentence-transformers
+- **Not yet locked in:** vector DB (candidates:
   Chroma, FAISS, Pinecone), frontend framework
 
 ## Test Repo
 `miguelgrinberg/microblog` — used for all Phase 0–2 development/testing
 
 ## Working Conventions
-- Ingestion code lives under `src/ingestion/`
+- Ingestion code lives under `src/ingestion/`, embedding code under
+  `src/embedding/`; each new phase gets its own package under `src/`
 - Follow existing patterns in `github_client.py` for new modules
   (function signatures take `owner, repo, token` style params)
-- Flag design tradeoffs before implementing — this is a learning/
-  resume project, so reasoning matters as much as working code
-- Don't skip ahead to later phases without confirming current
-  phase is done
+- Record design tradeoffs in `project_log.md` (options considered, choice,
+  reasoning) as part of implementing each phase
+- Work through phases in order; a phase is only marked ✅ once its code
+  runs end-to-end and its tests pass
