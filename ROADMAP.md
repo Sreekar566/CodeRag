@@ -61,14 +61,17 @@ complete unless explicitly confirmed below.
 - Verified end-to-end against all 54 filtered microblog files: no
   crashes, no gaps in line coverage between chunks
 
-### 🟨 Phase 3 — Embedding layer (in progress)
+### ✅ Phase 3 — Embedding layer (complete)
 Turn code chunks into vectors + metadata (file path, line numbers,
 language)
 - `src/embedding/embedder.py` written: `embed_chunks(chunks)` using
   `flax-sentence-embeddings/st-codesearch-distilroberta-base`
-  (switched from `jinaai/jina-embeddings-v2-base-code`, whose
-  `trust_remote_code` loading path deadlocked)
-- Not yet verified end-to-end; `language` metadata not yet added
+- Added language detection (`detect_language` in `chunker.py`) and ensured
+  language metadata is included on all chunks
+- Refactored model loading to be lazy (`get_model()`) to avoid network/memory
+  overhead during imports and unit tests
+- Verified end-to-end with unit tests (mocked model) and integration tests
+  producing 768-dimensional embeddings
 
 ### ⬜ Phase 4 — Vector DB storage & semantic retrieval
 

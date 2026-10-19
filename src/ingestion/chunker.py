@@ -1,21 +1,91 @@
+import os
+
 # Chunk size and overlap, in approximate tokens (whitespace-split words as a
 # stand-in until an embedding model is chosen and a real tokenizer is wired in).
 # Pick numbers and be ready to explain why.
-CHUNK_SIZE = 400 # e.g. 500
+CHUNK_SIZE = 400  # e.g. 500
 OVERLAP = 50  # e.g. 50
 
 # How far (in lines) to search for a nearby blank line when snapping a chunk
 # boundary, instead of cutting at the exact word count.
 BOUNDARY_SEARCH_WINDOW = 5  # e.g. 5
 
+EXTENSION_TO_LANGUAGE = {
+    ".py": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".html": "html",
+    ".htm": "html",
+    ".css": "css",
+    ".scss": "css",
+    ".sass": "css",
+    ".less": "css",
+    ".json": "json",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".md": "markdown",
+    ".markdown": "markdown",
+    ".rst": "restructuredtext",
+    ".sh": "shell",
+    ".bash": "shell",
+    ".zsh": "shell",
+    ".sql": "sql",
+    ".rb": "ruby",
+    ".go": "go",
+    ".rs": "rust",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".php": "php",
+    ".cs": "csharp",
+    ".swift": "swift",
+    ".r": "r",
+    ".lua": "lua",
+    ".xml": "xml",
+    ".toml": "toml",
+    ".ini": "ini",
+    ".cfg": "ini",
+    ".txt": "text",
+}
+
+FILENAME_TO_LANGUAGE = {
+    "dockerfile": "dockerfile",
+    "makefile": "makefile",
+    "vagrantfile": "ruby",
+    "procfile": "yaml",
+}
+
+
+def detect_language(path: str) -> str:
+    """
+    Detect the programming or markup language from a file path based on
+    its filename or extension.
+    """
+    filename = os.path.basename(path).lower()
+    if filename in FILENAME_TO_LANGUAGE:
+        return FILENAME_TO_LANGUAGE[filename]
+
+    _, ext = os.path.splitext(filename)
+    if ext in EXTENSION_TO_LANGUAGE:
+        return EXTENSION_TO_LANGUAGE[ext]
+
+    return "unknown"
+
 
 def chunk_text(text: str, path: str) -> list[dict]:
     """
     Splits a file's text into overlapping chunks, each tagged with the file
-    path and the line range it covers.
+    path, language, and the line range it covers.
 
     Returns a list of dicts like:
-        {"path": "app/models.py", "start_line": 1, "end_line": 42, "text": "..."}
+        {"path": "app/models.py", "start_line": 1, "end_line": 42, "text": "...", "language": "python"}
     """
     lines = text.split("\n")
 
@@ -55,7 +125,7 @@ def chunk_text(text: str, path: str) -> list[dict]:
             for offset in range(BOUNDARY_SEARCH_WINDOW + 1):
                 before = end_line - offset
                 after = end_line + offset
-                if 0 <= before < len(lines) and lines[before].strip() == "":
+                if 0 <= before < len(lines) and before > start_line and lines[before].strip() == "":
                     end_line = before
                     break
                 if after < len(lines) and lines[after].strip() == "":
@@ -70,7 +140,8 @@ def chunk_text(text: str, path: str) -> list[dict]:
             "path": path,
             "start_line": start_line + 1,  # convert to 1-based line numbers
             "end_line": end_line,
-            "text": chunk_body
+            "text": chunk_body,
+            "language": detect_language(path),
         })
 
         # move to the next chunk window
