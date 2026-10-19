@@ -13,11 +13,17 @@ Verified: 73 files found in microblog, real source fetched from app/auth/routes.
 Lessons: tree API vs contents API differ; never hardcode file paths; 404 can mean bad assumption not bad code; rate limits are a shared resource across concurrent users
 
 ## Phase 2: File Filtering and Code Chunking — In Progress
-Open question: which files (.flaskenv, LICENSE, Procfile, Vagrantfile, .gitattributes) should be filtered before chunking, and why
-Not yet started: filter_files(), chunk_text(), token-based chunking with overlap
+Resolved: filter decision reframed as "does this file help answer a target question type" not "is this code vs config."
+- .flaskenv, LICENSE, .gitattributes -> filter out (settings/legal/git-internal, no behavior, not deployment-relevant)
+- Procfile, Vagrantfile -> keep (onboarding/deployment questions are in scope for "summarize repo for a new engineer")
+Filter design: blocklist strategy chosen over allowlist (generalizes across languages without enumerating every source extension; accepted tradeoff is fail-open risk vs allowlist's fail-closed). Three layers: (1) noise directory blocklist, (2) noise extension/filename blocklist, (3) file size threshold as a red flag for generated/data files. Extensionless files (Dockerfile, Makefile, Procfile) pass through automatically under blocklist - no special-casing needed.
+Considered and rejected: human-in-the-loop review of ambiguous/extensionless binary files during ingestion. Rejected because (1) it breaks the automated-pipeline promise and is incompatible with async background workers (Phase 7), and (2) it's redundant - get_file_content() from Phase 1 already hard-fails to decode true binaries, so there's no real ambiguity left for a human to resolve.
+In progress: writing filter_files(tree) in src/ingestion/filters.py (tree-metadata layer, no content fetch)
+Not yet started: chunk_text(), token-based chunking with overlap
 
 ## Deferred to later phases
 - Caching repeated ingestion (Phase 6/8)
 - Concurrency handling for many users (Phase 7)
 - Auto-detect default branch instead of hardcoding "main"
 - Async/parallel file fetching (optimization, post-MVP)
+- Post-ingestion transparency/audit log showing what was filtered and why, for user inspection (pairs naturally with Phase 11 observability, not a blocking ingestion-time prompt)
