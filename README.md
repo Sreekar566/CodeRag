@@ -1,0 +1,172 @@
+# AI Codebase Intelligence Platform
+
+A production-grade, multi-repository code intelligence and question-answering system powered by Retrieval-Augmented Generation (RAG). It ingests public GitHub repositories, builds semantic vector indexes over code structures, and provides grounded answers citing exact file paths and line ranges.
+
+---
+
+## Features
+
+- **Language-Agnostic Ingestion & Blocklist Filtering:** Recursively fetches repository file trees via GitHub API without downloading bulky git history; filters binaries, lockfiles, build artifacts, test caches, and noise directories.
+- **Boundary-Snapping Chunking:** Splits code using an overlapping sliding window (`CHUNK_SIZE=400`, `OVERLAP=50`) that snaps to nearest blank lines to preserve cohesive functions without requiring fragile per-language AST parsers.
+- **Semantic Code Embeddings:** Converts code chunks into 768-dimensional dense vectors using `flax-sentence-embeddings/st-codesearch-distilroberta-base`.
+- **Persistent Vector Storage:** Backed by local Chroma vector database (`./data/chroma/`) with cosine similarity metrics and swappable storage interface.
+- **Incremental Git Sync:** Uses Git Merkle tree blob SHAs to compute file diffs (`added`, `modified`, `deleted`, `unchanged`). Only modified and added files are re-chunked and embedded, saving rate limits and computation.
+- **Multi-Signal Re-Ranking & Context Budgeting:** Reranks chunks combining vector similarity, lexical keywords, file path relevance, and symbol definitions (`def`, `class`). Assembles context within strict token budgets using "lost-in-the-middle" alternating placement.
+- **Grounded LLM Q&A:** Pluggable LLM interface supporting Google Gemini (`gemini-3.8-flash`) and deterministic `fake` provider for offline testing. Cites exact file spans (`path/to/file.py:10-25`).
+- **REST API (FastAPI):** Comprehensive endpoints for repository management, indexing, background tasks, diff preview, collections, and multi-repo queries.
+- **Interactive Web UI (Streamlit):** Web interface for chat, grounded citation review, syntax-highlighted chunk inspection, incremental repo indexing, and Git diff checks.
+
+---
+
+## Architecture Overview
+
+```
+GitHub API ──> Filter (Blocklist) ──> Blank-line Snapping Chunker
+                                               │
+                                               ▼
+Chroma Vector DB <── st-codesearch Embedding Layer
+       │
+       ▼
+Semantic Retrieval ──> Multi-Signal Reranker ──> Token Budget Assembler
+                                                         │
+                                                         ▼
+                                                Gemini LLM Engine
+                                                         │
+                                                         ▼
+                                       Grounded Answer + Line Citations
+```
+
+---
+
+## Installation & Setup
+
+### Prerequisites
+- Python 3.12+
+- Linux / macOS (4 GB RAM minimum; runs on CPU)
+
+### 1. Clone & Set Up Virtual Environment
+
+```bash
+python3.12 -m venv venv
+source venv/bin/activate
+```
+
+### 2. Install PyTorch (CPU-only) & Dependencies
+
+```bash
+# Install PyTorch CPU wheel
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install pinned dependencies
+pip install -r requirements.txt
+```
+
+### 3. Environment Variables
+
+Create a `.env` file or export environment variables:
+
+```bash
+# GitHub Access Token (for accessing public repositories without low rate limits)
+export GITHUB_TOKEN="ghp_your_personal_access_token"
+
+# LLM Provider: 'gemini' for real generation, 'fake' for offline/testing
+export LLM_PROVIDER="gemini"
+export GEMINI_API_KEY="your_gemini_api_key"
+
+# Optional UI settings
+export API_BASE_URL="http://localhost:8000"
+```
+
+---
+
+## Quickstart & Usage
+
+### Option 1: Interactive Streamlit Web UI
+
+Start both the backend server and frontend interface:
+
+1. **Start the FastAPI Backend:**
+   ```bash
+   python -m src.api.main --host 0.0.0.0 --port 8000
+   ```
+
+2. **Start the Streamlit Frontend UI:**
+   ```bash
+   python -m src.ui.main --port 8501
+   ```
+   Open `http://localhost:8501` in your browser.
+
+In the Web UI:
+- **💬 Codebase Chat:** Ask natural language questions, inspect grounded citations (`path/to/file.py:10-25`), and view syntax-highlighted source chunks.
+- **📦 Repositories & Ingestion:** Ingest any GitHub repository (e.g. `miguelgrinberg/microblog`), check pending Git diffs, or execute incremental re-indexing.
+- **🔍 Vector Collections:** Browse stored vector collections, sample chunks, and inspect code metadata.
+
+---
+
+### Option 2: REST API
+
+With the backend running (`python -m src.api.main`):
+
+- **Interactive API Docs:** Visit `http://localhost:8000/docs` (Swagger UI) or `http://localhost:8000/redoc`.
+- **System Health:**
+  ```bash
+  curl http://localhost:8000/health
+  ```
+- **Index a Repository:**
+  ```bash
+  curl -X POST http://localhost:8000/index \
+       -H "Content-Type: application/json" \
+       -d '{"owner": "miguelgrinberg", "repo": "microblog", "branch": "main"}'
+  ```
+- **Ask a Question:**
+  ```bash
+  curl -X POST http://localhost:8000/query \
+       -H "Content-Type: application/json" \
+       -d '{"question": "How is user authentication handled?", "repo": "miguelgrinberg/microblog"}'
+  ```
+
+---
+
+### Option 3: Python CLI / Programmatic Usage
+
+You can also interact directly via Python:
+
+```python
+from src.registry.incremental import IncrementalIndexer
+from src.rag.engine import ask_codebase
+
+# 1. Ingest & index repository
+indexer = IncrementalIndexer()
+result = indexer.index_repository_incremental(
+    owner="miguelgrinberg",
+    repo="microblog",
+)
+print(f"Indexed {result.files_processed} files into {result.chunks_stored} chunks.")
+
+# 2. Ask a question
+response = ask_codebase(
+    question="Where is database configuration set up?",
+    repo="miguelgrinberg/microblog",
+)
+
+print(response.formatted_answer)
+for citation in response.citations:
+    print(f"  - {citation.citation_str}")
+```
+
+---
+
+## Running Tests
+
+All unit tests run offline without network access, model downloads, or API keys:
+
+```bash
+# Run the complete offline test suite
+pytest
+
+# Run tests with verbose output
+pytest -v
+
+# Run integration tests (requires network, PyTorch model, and GEMINI_API_KEY)
+pytest -m integration
+```

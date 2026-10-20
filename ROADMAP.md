@@ -131,7 +131,24 @@ language)
 - Pinned `fastapi==0.156.3` and `starlette==1.9.0` in `requirements.txt`
 - Comprehensive unit test suite in `tests/test_api.py` (20 tests passing in ~5.9s; total 132 tests passing)
 
-### ⬜ Phase 9 — Frontend/chat UI (likely Streamlit or React)
+### ✅ Phase 9 — Frontend/chat UI (complete)
+- Created `src/ui/` package with interactive Streamlit web dashboard and CLI runner (`python -m src.ui.main`)
+- `ApiClient` (`src/ui/client.py`) connecting to backend FastAPI server with connection diagnostics, timeout handling, and domain error classes
+- Reusable UI presentation components (`src/ui/components.py`):
+  - Code citation rendering with file path and line numbers
+  - Syntax-highlighted code chunk viewer with similarity scores and line range metadata
+  - Remote Git Merkle tree diff previewing pending repository changes
+  - Formatted query metrics (tokens, retrieved/selected chunks, reranked status)
+- Streamlit application (`src/ui/app.py`):
+  - 💬 **Codebase Chat**: interactive Q&A scoped to single or all repositories, retrieval controls (top-k, token budget, reranking, temperature), suggested question pills, grounded markdown generation, citations panel, and source chunk inspection
+  - 📦 **Repositories & Ingestion**: GitHub repository indexing with branch auto-detection, force re-indexing, background tasks, repository explorer, remote Git diff checks, one-click incremental sync, and cascading deletion
+  - 🔍 **Vector Collections**: vector store collection browser, sample chunk inspection, and collection purging
+  - ℹ️ **Architecture & About**: RAG pipeline explanation and links to FastAPI Swagger UI docs
+  - Responsive Sidebar: backend connectivity indicator, vector store & LLM model telemetry, and connection settings
+- CLI launcher (`src/ui/main.py`) accepting `--host`, `--port`, and `--api-url` arguments
+- Root `README.md` created with complete setup, CLI, REST API, and Streamlit UI documentation
+- Pinned `streamlit==1.66.0` and its dependencies in `requirements.txt`
+- Unit test suite `tests/test_ui.py` (20 tests passing in ~0.3s; total 152 tests passing)
 
 ### ⬜ Phase 10 — Evaluation framework
 Retrieval accuracy, hallucination rate against benchmark Q&A pairs
@@ -145,7 +162,7 @@ Retrieval accuracy, hallucination rate against benchmark Q&A pairs
 - **Embedding model:** `flax-sentence-embeddings/st-codesearch-distilroberta-base`
   via sentence-transformers
 - **Vector DB:** Chroma (`chromadb==1.5.9`), persistent local storage in `./data/chroma/`
-- **Not yet locked in:** frontend framework
+- **Frontend framework:** Streamlit (`streamlit==1.66.0`)
 
 ## Test Repo
 `miguelgrinberg/microblog` — used for all Phase 0–2 development/testing

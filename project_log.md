@@ -206,6 +206,39 @@ Design options considered:
    - Choice made: Option B.
    - Why: Orphaned vector store collections consume disk space and memory and create discrepancies between the registry and storage. Atomic cascading deletion guarantees consistent state.
 
+## Phase 9: Frontend / Chat UI (Streamlit) — Complete
+What was built:
+- Dedicated `src/ui/` package with interactive Streamlit web dashboard and CLI runner (`python -m src.ui.main`):
+  - `src/ui/client.py`: `ApiClient` wrapping the FastAPI backend with connection retry/timeout handling, custom domain exceptions (`ApiClientError`, `ApiConnectionError`), and methods for system health checks, repository CRUD, Git diff previews, synchronous/background indexing, vector collection inspection, and natural-language RAG queries.
+  - `src/ui/components.py`: Presentation formatting and rendering components for code citations (`path:start-end`), execution metrics (tokens, chunk counts, latency), status badges with indicators, Git diff preview tables, and syntax-highlighted source code chunks.
+  - `src/ui/app.py`: Full-featured multi-tab Streamlit application:
+    - Tab 1 (💬 Codebase Chat): Conversational interface with codebase scoping (all repos or specific indexed repo), retrieval parameter controls (top-k, context token budget, multi-signal re-ranking, LLM temperature), suggested question pills, grounded markdown answers, collapsible citation panels, syntax-highlighted retrieved code snippets with similarity scores, and execution metrics.
+    - Tab 2 (📦 Repositories & Ingestion): Ingestion form supporting branch auto-detection, force re-indexing, and background task execution; indexed codebase explorer with file and chunk metrics, remote Git Merkle tree diff inspection previewing pending changes before re-indexing, one-click incremental sync, and cascading repository deletion.
+    - Tab 3 (🔍 Vector Collections): Vector store collection browser displaying chunk counts, sample code chunk inspection with language formatting and line ranges, and collection purge capability.
+    - Tab 4 (ℹ️ Architecture & About): RAG pipeline overview, workflow walkthrough, and direct links to FastAPI Swagger UI docs.
+  - Responsive Sidebar: Live backend connection indicator, vector store & LLM provider diagnostics, repo counts, and connection settings.
+  - CLI runner in `src/ui/main.py`: accepts `--host`, `--port`, `--api-url`, and `--headless` flags to launch Streamlit programmatically.
+  - Created root `README.md` documenting architecture, setup, CLI usage, REST API endpoints, Streamlit UI, and testing.
+  - Pinned `streamlit==1.66.0` and its dependencies in `requirements.txt`.
+  - Comprehensive unit test suite in `tests/test_ui.py` (20 tests covering API client requests, connection errors, HTTP errors, formatting helpers, and CLI argument parsing; all passing in 0.27s). Total project unit test suite: 152 tests passing.
+
+Design options considered:
+1. Frontend Architecture (Direct backend module imports vs. HTTP API Client):
+   - Option A: Have Streamlit import `IncrementalIndexer`, `RAGEngine`, and `ChromaVectorStore` directly in-process.
+   - Option B: Decouple Streamlit as a pure client interacting with the FastAPI backend via `ApiClient`.
+   - Choice made: Option B.
+   - Why: Decoupling respects service boundaries, avoids duplicating model and vector store memory across multiple processes, allows the frontend and backend to scale or run on different hosts/containers (critical for Phase 11 containerization), and simplifies testing through mockable HTTP calls.
+2. UI Connection Fault Tolerance & Offline State:
+   - Option A: Hard-fail / crash Streamlit with an unhandled exception if the FastAPI backend is not yet started.
+   - Option B: Graceful degradation with clear connection diagnostics, offline status banner, and actionable instructions (`python -m src.api.main`).
+   - Choice made: Option B.
+   - Why: In multi-process and microservice setups, the UI may start before the backend or the backend may temporarily restart. Graceful degradation provides immediate feedback and prevents cryptic stack traces for users and developers.
+3. Grounded Code Citation & Chunk Inspection Presentation:
+   - Option A: Dump raw chunk text into the assistant message body.
+   - Option B: Keep the assistant message concise with clean markdown text, and provide collapsible, syntax-highlighted expanders for citations and source chunks with line numbers and similarity scores.
+   - Choice made: Option B.
+   - Why: Dumping 10 retrieved code chunks directly into the message body overwhelms the chat feed and makes reading answers difficult. Collapsible accordion panels keep the conversation readable while maintaining 100% transparency and auditability for code verification.
+
 ## Deferred to later phases
 - Caching repeated ingestion (Phase 8 API caching)
 - Async/parallel file fetching (optimization, post-MVP)
