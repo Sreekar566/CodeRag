@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import numpy as np
 
-from src.embedding.embedder import embed_chunks
+from src.embedding.embedder import embed_chunks, embed_query, embed_texts
 
 
 def test_embed_chunks_empty():
@@ -58,6 +58,27 @@ def test_embed_chunks_preserves_existing_language():
     result = embed_chunks(chunks, model=mock_model)
     assert result[0]["language"] == "custom_lang"
     assert result[0]["embedding"] == [0.1, 0.2]
+
+
+def test_embed_query_mocked():
+    mock_model = MagicMock()
+    mock_model.encode.return_value = np.array([0.1, 0.2, 0.3])
+    vec = embed_query("how is login handled?", model=mock_model)
+    assert vec == [0.1, 0.2, 0.3]
+    mock_model.encode.assert_called_once_with("how is login handled?")
+
+
+def test_embed_query_empty_error():
+    with pytest.raises(ValueError, match="cannot be empty"):
+        embed_query("")
+
+
+def test_embed_texts_mocked():
+    mock_model = MagicMock()
+    mock_model.encode.return_value = np.array([[0.1, 0.2], [0.3, 0.4]])
+    vecs = embed_texts(["text 1", "text 2"], model=mock_model)
+    assert vecs == [[0.1, 0.2], [0.3, 0.4]]
+    assert embed_texts([], model=mock_model) == []
 
 
 @pytest.mark.integration

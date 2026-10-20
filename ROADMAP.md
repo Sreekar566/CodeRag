@@ -73,7 +73,15 @@ language)
 - Verified end-to-end with unit tests (mocked model) and integration tests
   producing 768-dimensional embeddings
 
-### ⬜ Phase 4 — Vector DB storage & semantic retrieval
+### ✅ Phase 4 — Vector DB storage & semantic retrieval (complete)
+- Created `src/storage/` package with swappable `VectorStore` interface (`base.py`)
+- Implemented `ChromaVectorStore` (`chroma_store.py`) backed by Chroma with persistent storage in `./data/chroma/` (cosine similarity metric `hnsw:space: cosine`)
+- Implemented `InMemoryVectorStore` (`memory_store.py`) as an alternative swappable backend
+- Implemented idempotent chunk ID generation, metadata type sanitization, and batch upserting
+- Implemented semantic retrieval with `query` (text search via embedder) and `query_by_embedding`, returning ranked results with chunk metadata and line ranges
+- Added `index_repository` and `index_files` in `src/storage/indexer.py` connecting ingestion, filtering, chunking, embedding, and vector storage
+- Pinned `chromadb==1.5.9` and its dependencies in `requirements.txt`
+- Verified end-to-end with unit tests (35 passing) and integration test confirming semantic search accuracy against real embeddings
 
 ### ⬜ Phase 5 — RAG / Q&A engine
 Retrieve relevant chunks, feed to LLM, generate cited answers
@@ -98,8 +106,8 @@ Retrieval accuracy, hallucination rate against benchmark Q&A pairs
 - **Confirmed:** Python, GitHub REST API, venv
 - **Embedding model:** `flax-sentence-embeddings/st-codesearch-distilroberta-base`
   via sentence-transformers
-- **Not yet locked in:** vector DB (candidates:
-  Chroma, FAISS, Pinecone), frontend framework
+- **Vector DB:** Chroma (`chromadb==1.5.9`), persistent local storage in `./data/chroma/`
+- **Not yet locked in:** frontend framework
 
 ## Test Repo
 `miguelgrinberg/microblog` — used for all Phase 0–2 development/testing

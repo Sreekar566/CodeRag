@@ -1,19 +1,18 @@
 # Progress Handoff
 
 ## Completed This Run
-- Installed and pinned `pytest==9.1.1`, `iniconfig==2.3.1`, and `pluggy==1.7.0` in `requirements.txt`.
-- Updated `.gitignore` to include `data/`, `.pytest_cache/`, and `.cache/`.
-- Configured `pytest.ini` with `@pytest.mark.integration` marker (skipped by default).
-- Implemented language detection (`detect_language`) in `src/ingestion/chunker.py` and ensured language metadata on all chunks.
-- Refactored `src/embedding/embedder.py` with lazy model initialization (`get_model()`) and dependency injection for swappable/mock models.
-- Wrote unit tests for `filters.py`, `chunker.py`, `github_client.py` (mocked), and `embedder.py` (mocked).
-- Added integration test verifying real 768-dim embeddings from `flax-sentence-embeddings/st-codesearch-distilroberta-base`.
-- Verified all 23 unit tests pass in ~4.4s and integration test passes.
-- Completed Phase 3; updated `ROADMAP.md` and `project_log.md`.
+- Installed and pinned `chromadb==1.5.9` and all dependencies in `requirements.txt`.
+- Created `src/storage/` module with swappable `VectorStore` interface (`base.py`) and collection name sanitization.
+- Built `ChromaVectorStore` (`chroma_store.py`) storing in `./data/chroma/` using cosine distance (`hnsw:space: cosine`), batch upserting, safe metadata sanitization, and structured result formatting.
+- Built `InMemoryVectorStore` (`memory_store.py`) with numpy cosine similarity as an alternative swappable backend.
+- Added `index_repository()` and `index_files()` in `src/storage/indexer.py` uniting ingestion, filtering, chunking, embedding, and vector storage into an automated pipeline with error handling.
+- Added `embed_query` and `embed_texts` in `src/embedding/embedder.py` with unit tests.
+- Wrote unit test suites `tests/test_storage.py` and `tests/test_indexer.py` (35 unit tests passing in ~8s).
+- Added integration test `tests/test_storage_integration.py` verifying real persistent Chroma vector indexing and semantic retrieval for code queries.
+- Completed Phase 4; updated `ROADMAP.md` and `project_log.md`.
 
 ## Next Steps (Prioritized)
-1. **Phase 4 — Vector DB Storage**: Build Chroma wrapper in `src/storage/` with swappable interface storing in `./data/chroma/`.
-2. **Phase 4 — Semantic Retrieval**: Implement collection upsert for chunk embeddings + metadata, and similarity search (`query(text, top_k)`).
-3. **Phase 4 — Tests**: Add unit tests for vector store operations (ephemeral/mocked) and integration test with real Chroma client.
-4. **Phase 5 — LLM Interface**: Implement `src/llm/` with swappable provider interface (`fake` provider for tests, `gemini` via `google-genai`).
-5. **Phase 5 — RAG Pipeline**: Connect retrieval to LLM prompt generation to answer natural-language questions with cited file paths and line ranges.
+1. **Phase 5 — LLM Interface**: Implement swappable provider interface in `src/llm/` selected via `LLM_PROVIDER` env var (`fake` provider for tests, `gemini` via `google-genai` SDK using `GEMINI_API_KEY`).
+2. **Phase 5 — RAG Pipeline**: Connect semantic retrieval (`ChromaVectorStore.query`) to LLM prompt generation to answer natural-language code questions with file path and line range citations.
+3. **Phase 5 — Unit & Integration Tests**: Add unit tests using `fake` LLM provider verifying grounding, citation generation, and error handling.
+4. **Phase 6 — Context Assembly & Re-ranking**: Implement token-budget-aware chunk trimming and relevance ranking.
