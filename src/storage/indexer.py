@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from src.ingestion.github_client import get_repo_tree, get_file_content
+from src.ingestion.github_client import get_repo_tree, get_file_content, get_default_branch
 from src.ingestion.filters import filter_files
 from src.ingestion.chunker import chunk_text
 from src.embedding.embedder import embed_chunks
@@ -67,6 +67,9 @@ def index_repository(
     collection_name: str | None = None,
     branch: str = "main",
     embedder_model: Any = None,
+    incremental: bool = False,
+    registry: Any = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """
     Full pipeline to index a GitHub repository into the vector database.
@@ -76,13 +79,39 @@ def index_repository(
     4. Chunk text into overlapping code chunks with line numbers & language metadata
     5. Compute vector embeddings
     6. Store chunks in vector DB
+
+    If incremental=True, uses IncrementalIndexer to only process added/modified files
+    and avoid re-indexing unchanged repositories.
     """
+    if incremental:
+        from src.registry.incremental import index_repository_incremental
+        res = index_repository_incremental(
+            owner=owner,
+            repo=repo,
+            token=token,
+            branch=branch,
+            collection_name=collection_name,
+            force=force,
+            vector_store=vector_store,
+            registry=registry,
+            embedder_model=embedder_model,
+        )
+        return res.to_dict()
+
     if collection_name is None:
         collection_name = f"{owner}_{repo}"
     collection_name = sanitize_collection_name(collection_name)
 
     if vector_store is None:
         vector_store = get_vector_store()
+
+    # Auto-detect default branch if requested
+    if branch is None or branch == "auto":
+        try:
+            branch = get_default_branch(owner, repo, token)
+        except Exception as e:
+            logger.warning(f"Failed to auto-detect branch for {owner}/{repo}: {e}. Falling back to 'main'")
+            branch = "main"
 
     # Step 1: List all files
     tree = get_repo_tree(owner, repo, token, branch=branch)
@@ -121,5 +150,22 @@ def index_repository(
         "filtered_files": len(filtered_items),
         "skipped_files": skipped_files,
     })
+
+    if registry is not None:
+        from src.registry.models import RepositoryMetadata
+        from datetime import datetime, timezone
+        registry.register(
+            RepositoryMetadata(
+                owner=owner,
+                repo=repo,
+                collection_name=collection_name,
+                branch=branch,
+                indexed_at=datetime.now(timezone.utc).isoformat(),
+                file_count=len(filtered_items),
+                chunk_count=result.get("chunks_stored", 0),
+                file_shas={item["path"]: item.get("sha", "") for item in filtered_items if "path" in item},
+                status="ready",
+            )
+        )
 
     return result

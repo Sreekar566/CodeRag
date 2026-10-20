@@ -26,16 +26,19 @@ def format_code_context(chunks: list[dict[str, Any]]) -> str:
 
     context_blocks: list[str] = []
     for i, chunk in enumerate(chunks, 1):
-        path = chunk.get("path") or chunk.get("metadata", {}).get("path", "unknown")
-        start = chunk.get("start_line") or chunk.get("metadata", {}).get("start_line", 1)
-        end = chunk.get("end_line") or chunk.get("metadata", {}).get("end_line", 1)
-        lang = chunk.get("language") or chunk.get("metadata", {}).get("language", "")
+        path = chunk.get("path") or (chunk.get("metadata", {}) or {}).get("path", "unknown")
+        repo = chunk.get("repo") or (chunk.get("metadata", {}) or {}).get("repo")
+        start = chunk.get("start_line") or (chunk.get("metadata", {}) or {}).get("start_line", 1)
+        end = chunk.get("end_line") or (chunk.get("metadata", {}) or {}).get("end_line", 1)
+        lang = chunk.get("language") or (chunk.get("metadata", {}) or {}).get("language", "")
         text = chunk.get("text", "").strip()
         is_truncated = chunk.get("truncated", False)
 
         header_suffix = " [Truncated]" if is_truncated else ""
+        repo_prefix = f"Repo: {repo}\n" if repo else ""
         block = (
             f"[Source {i}]{header_suffix}\n"
+            f"{repo_prefix}"
             f"File: {path} (Lines {start}-{end})\n"
             f"Language: {lang}\n"
             f"```{lang}\n"

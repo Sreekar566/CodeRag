@@ -133,9 +133,48 @@ Design options considered:
    - Choice made: Option B.
    - Why: Empirical research confirms LLM retrieval attention is strongest at prompt boundaries (near instructions and user query) and degrades in the middle; alternating placement significantly reduces hallucination and improves answer accuracy.
 
+## Phase 7: Multi-repo Support & Incremental Re-indexing — Complete
+What was built:
+- Enhanced GitHub client in `src/ingestion/github_client.py`: added `get_default_branch(owner, repo, token)` to query repository metadata and `get_latest_commit_sha(owner, repo, token, branch)` to query latest commit on a branch.
+- Dedicated `src/registry/` package:
+  - `src/registry/models.py`: structured data models `RepositoryMetadata` (tracking owner, repo, branch, commit SHA, file SHAs mapping, chunk count, operational status), `ChangeSet` (classifying added, modified, deleted, unchanged files), and `IncrementalIndexResult`.
+  - `src/registry/registry.py`: `RepoRegistry` with persistent JSON storage (`./data/registry.json`), atomic disk writes (temp file + `os.replace`), thread safety (`threading.RLock`), and per-repository locks to avoid concurrent duplicate indexing jobs.
+  - `src/registry/incremental.py`: `detect_changes` computing tree SHA differences, and `IncrementalIndexer` (`index_repository_incremental`) orchestrating delta-only synchronization with VectorStore.
+- Ingestion-to-VectorStore synchronization:
+  - Commit SHA short-circuiting: unchanged repositories skip tree and file fetching entirely.
+  - Modified files: purge stale chunks from vector store before re-indexing.
+  - Deleted files: purge chunks from vector store using metadata queries (`where={"path": path}`).
+  - Unchanged files: zero network calls to GitHub, zero chunking, zero embedding computation.
+- Multi-repository RAG support in `src/rag/engine.py`:
+  - `answer_question` supports `repos: list[str]`, `collections: list[str]`, or multi-repo lists, querying each collection and tagging candidate chunks with repo labels.
+  - `answer_multi_repo(question, repos)` convenience method for cross-repo questions.
+  - Cross-repo context budgeting and re-ranking: best snippets across codebases compete fairly within the token budget.
+  - Prompt formatting in `src/rag/prompt.py` annotates sources with `Repo: ...` tags.
+  - Citations in `src/rag/citations.py` support repository attribution (`repo:path:start-end`).
+- Unit and integration tests:
+  - `tests/test_registry.py` (7 tests): serialization, CRUD, disk persistence, concurrency, and locks.
+  - `tests/test_incremental.py` (8 tests): diff detection, initial indexing, unchanged skips, delta updates, branch auto-detection, and persistent Chroma integration.
+  - `tests/test_multi_repo.py` (4 tests): cross-repo queries, prompt annotations, citations, and zero-token empty handling.
+  - Total unit test suite: 112 passed, 5 integration tests deselected by default.
+
+Design options considered:
+1. Incremental change detection mechanism:
+   - Option A: Fetch all file contents and compute MD5/SHA256 hashes locally.
+   - Option B: Use GitHub Git Tree blob SHAs (already provided in the single tree API response) and compare against registry records.
+   - Choice made: Option B.
+   - Why: Option A requires $O(N)$ HTTP API requests to GitHub on every re-indexing run, rapidly exhausting GitHub rate limits. Option B utilizes git's native Merkle tree blob SHAs in a single tree API call, reducing API calls to $O(M)$ where $M$ is the number of modified/added files only.
+2. Vector store cleanup for modified files:
+   - Option A: Rely purely on chunk ID overwrites via upsert.
+   - Option B: Explicitly delete old chunks for the file path before adding new chunks (`where={"path": path}`).
+   - Choice made: Option B.
+   - Why: Upsert only overwrites chunks with identical IDs. If a file shrank from 6 chunks to 3 chunks after modification, pure upsert leaves 3 orphaned chunks in the vector DB, polluting subsequent retrieval with phantom code. Explicit path-scoped deletion guarantees complete cleanup.
+3. Multi-repo query architecture:
+   - Option A: Consolidate all codebases into a single vector collection with a repo metadata tag.
+   - Option B: Maintain distinct collections per repository and federate search across collections at query time.
+   - Choice made: Option B.
+   - Why: Per-repo collections maintain clean isolation, make incremental re-indexing, clearing, and deleting trivial without expensive metadata filtering across massive indices, and prevent HNSW index degradation across hundreds of repos.
+
 ## Deferred to later phases
-- Caching repeated ingestion (Phase 6/8)
-- Concurrency handling for many users (Phase 7)
-- Auto-detect default branch instead of hardcoding "main"
+- Caching repeated ingestion (Phase 8 API caching)
 - Async/parallel file fetching (optimization, post-MVP)
-- Post-ingestion transparency/audit log showing what was filtered and why, for user inspection (pairs naturally with Phase 11 observability, not a blocking ingestion-time prompt)
+- Post-ingestion transparency/audit log showing what was filtered and why, for user inspection (Phase 11/12)

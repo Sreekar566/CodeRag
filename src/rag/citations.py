@@ -16,16 +16,23 @@ class Citation:
     end_line: int | None = None
     language: str | None = None
     snippet: str | None = None
+    repo: str | None = None
 
     def format_citation(self) -> str:
-        """Format as path:start-end or path:start or path."""
+        """Format as [repo:]path:start-end or [repo:]path:start or [repo:]path."""
         if self.start_line is not None and self.end_line is not None:
             if self.start_line == self.end_line:
-                return f"{self.path}:{self.start_line}"
-            return f"{self.path}:{self.start_line}-{self.end_line}"
+                loc = f"{self.path}:{self.start_line}"
+            else:
+                loc = f"{self.path}:{self.start_line}-{self.end_line}"
         elif self.start_line is not None:
-            return f"{self.path}:{self.start_line}"
-        return self.path
+            loc = f"{self.path}:{self.start_line}"
+        else:
+            loc = self.path
+
+        if self.repo and not self.path.startswith(f"{self.repo}/"):
+            return f"{self.repo}:{loc}"
+        return loc
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +42,7 @@ class Citation:
             "language": self.language,
             "formatted": self.format_citation(),
             "snippet": self.snippet,
+            "repo": self.repo,
         }
 
     def __str__(self) -> str:
@@ -113,19 +121,20 @@ def citations_from_chunks(chunks: list[dict[str, Any]]) -> list[Citation]:
     Generate citations directly from retrieved source chunks.
     """
     citations: list[Citation] = []
-    seen: set[tuple[str, Any, Any]] = set()
+    seen: set[tuple[str | None, str, Any, Any]] = set()
 
     for chunk in chunks:
-        path = chunk.get("path") or chunk.get("metadata", {}).get("path")
+        path = chunk.get("path") or (chunk.get("metadata", {}) or {}).get("path")
         if not path:
             continue
 
-        start = chunk.get("start_line") or chunk.get("metadata", {}).get("start_line")
-        end = chunk.get("end_line") or chunk.get("metadata", {}).get("end_line")
-        lang = chunk.get("language") or chunk.get("metadata", {}).get("language")
+        repo = chunk.get("repo") or (chunk.get("metadata", {}) or {}).get("repo")
+        start = chunk.get("start_line") or (chunk.get("metadata", {}) or {}).get("start_line")
+        end = chunk.get("end_line") or (chunk.get("metadata", {}) or {}).get("end_line")
+        lang = chunk.get("language") or (chunk.get("metadata", {}) or {}).get("language")
         snippet = chunk.get("text")
 
-        key = (path, start, end)
+        key = (repo, path, start, end)
         if key not in seen:
             seen.add(key)
             citations.append(
@@ -135,6 +144,7 @@ def citations_from_chunks(chunks: list[dict[str, Any]]) -> list[Citation]:
                     end_line=int(end) if end is not None else None,
                     language=str(lang) if lang else None,
                     snippet=snippet,
+                    repo=repo,
                 )
             )
 

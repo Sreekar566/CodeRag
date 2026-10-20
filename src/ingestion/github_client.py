@@ -5,7 +5,7 @@ import os
 GITHUB_API_BASE = "https://api.github.com"
 
 
-def get_repo_tree(owner: str, repo: str, token: str, branch: str = "main"):
+def get_repo_tree(owner: str, repo: str, token: str | None = None, branch: str = "main"):
     """
     Fetch the full recursive file tree for a GitHub repo.
 
@@ -14,7 +14,7 @@ def get_repo_tree(owner: str, repo: str, token: str, branch: str = "main"):
     """
     url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/git/trees/{branch}"
     params = {"recursive": "1"}
-    headers = {"Authorization": f"token {token}"}
+    headers = {"Authorization": f"token {token}"} if token else {}
 
     response = requests.get(url, headers=headers, params=params)
 
@@ -32,14 +32,14 @@ def get_repo_tree(owner: str, repo: str, token: str, branch: str = "main"):
 
 
 
-def get_file_content(owner: str, repo: str, path: str, token: str):
+def get_file_content(owner: str, repo: str, path: str, token: str | None = None):
     """
     Fetch and decode the raw text content of a single file in a repo.
 
     Returns the file content as a string, or None if it's binary/undecodable.
     """
     url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/contents/{path}"
-    headers = {"Authorization": f"token {token}"}
+    headers = {"Authorization": f"token {token}"} if token else {}
 
     response = requests.get(url, headers=headers)
 
@@ -59,6 +59,43 @@ def get_file_content(owner: str, repo: str, path: str, token: str):
     except UnicodeDecodeError:
         # It's binary (image, compiled file, etc.) - can't treat as text
         return None
+
+
+def get_default_branch(owner: str, repo: str, token: str | None = None) -> str:
+    """
+    Fetch the default branch for a GitHub repository.
+    Returns the branch name (e.g., 'main' or 'master').
+    """
+    url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}"
+    headers = {"Authorization": f"token {token}"} if token else {}
+
+    response = requests.get(url, headers=headers)
+    if response.status_code == 404:
+        raise ValueError(f"Repo not found: {owner}/{repo}")
+    if response.status_code == 403:
+        raise RuntimeError("Rate limit hit or access forbidden")
+    response.raise_for_status()
+
+    data = response.json()
+    return data.get("default_branch", "main")
+
+
+def get_latest_commit_sha(owner: str, repo: str, token: str | None = None, branch: str = "main") -> str:
+    """
+    Fetch the latest commit SHA for a specific branch of a GitHub repository.
+    """
+    url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/commits/{branch}"
+    headers = {"Authorization": f"token {token}"} if token else {}
+
+    response = requests.get(url, headers=headers)
+    if response.status_code == 404:
+        raise ValueError(f"Repo or branch not found: {owner}/{repo}@{branch}")
+    if response.status_code == 403:
+        raise RuntimeError("Rate limit hit or access forbidden")
+    response.raise_for_status()
+
+    data = response.json()
+    return data["sha"]
 
 
 if __name__ == "__main__":

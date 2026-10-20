@@ -3,7 +3,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.ingestion.github_client import get_repo_tree, get_file_content
+from src.ingestion.github_client import (
+    get_repo_tree,
+    get_file_content,
+    get_default_branch,
+    get_latest_commit_sha,
+)
 
 
 def test_get_repo_tree_success():
@@ -117,3 +122,78 @@ def test_get_file_content_http_error():
     with patch("requests.get", return_value=mock_response):
         with pytest.raises(requests.HTTPError):
             get_file_content("owner", "repo", "some_file.py", "fake_token")
+
+
+def test_get_default_branch_success():
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"default_branch": "master", "name": "repo"}
+
+    with patch("requests.get", return_value=mock_response) as mock_get:
+        branch = get_default_branch("owner", "repo", "fake_token")
+        assert branch == "master"
+        mock_get.assert_called_once_with(
+            "https://api.github.com/repos/owner/repo",
+            headers={"Authorization": "token fake_token"},
+        )
+
+
+def test_get_default_branch_default_fallback():
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"name": "repo"}
+
+    with patch("requests.get", return_value=mock_response):
+        branch = get_default_branch("owner", "repo")
+        assert branch == "main"
+
+
+def test_get_default_branch_404_raises():
+    mock_response = MagicMock()
+    mock_response.status_code = 404
+
+    with patch("requests.get", return_value=mock_response):
+        with pytest.raises(ValueError, match="Repo not found"):
+            get_default_branch("owner", "missing")
+
+
+def test_get_default_branch_403_raises():
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+
+    with patch("requests.get", return_value=mock_response):
+        with pytest.raises(RuntimeError, match="Rate limit hit or access forbidden"):
+            get_default_branch("owner", "repo")
+
+
+def test_get_latest_commit_sha_success():
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"sha": "c0ffee1234567890", "commit": {"message": "Initial commit"}}
+
+    with patch("requests.get", return_value=mock_response) as mock_get:
+        sha = get_latest_commit_sha("owner", "repo", "fake_token", branch="main")
+        assert sha == "c0ffee1234567890"
+        mock_get.assert_called_once_with(
+            "https://api.github.com/repos/owner/repo/commits/main",
+            headers={"Authorization": "token fake_token"},
+        )
+
+
+def test_get_latest_commit_sha_404_raises():
+    mock_response = MagicMock()
+    mock_response.status_code = 404
+
+    with patch("requests.get", return_value=mock_response):
+        with pytest.raises(ValueError, match="Repo or branch not found"):
+            get_latest_commit_sha("owner", "repo", branch="dev")
+
+
+def test_get_latest_commit_sha_403_raises():
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+
+    with patch("requests.get", return_value=mock_response):
+        with pytest.raises(RuntimeError, match="Rate limit hit or access forbidden"):
+            get_latest_commit_sha("owner", "repo")
+

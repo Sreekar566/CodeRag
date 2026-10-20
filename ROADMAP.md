@@ -105,7 +105,14 @@ language)
 - Pinned `tiktoken==0.14.0` in `requirements.txt`
 - Added comprehensive unit test suites `tests/test_tokenizer.py`, `tests/test_reranker.py`, and `tests/test_context_assembler.py` (87 unit tests passing in ~8.6s)
 
-### ⬜ Phase 7 — Multi-repo support + incremental re-indexing
+### ✅ Phase 7 — Multi-repo support + incremental re-indexing (complete)
+- Created `src/registry/` package with `RepositoryMetadata`, `ChangeSet`, `IncrementalIndexResult`, `RepoRegistry`, and `IncrementalIndexer`
+- Added default branch auto-detection (`get_default_branch`) and latest commit SHA tracking (`get_latest_commit_sha`) in `src/ingestion/github_client.py`
+- Implemented persistent JSON repository registry (`./data/registry.json`) with atomic file writes and per-repo re-entrant locks for concurrency safety
+- Implemented file tree SHA diffing in `detect_changes()` categorizing files into added, modified, deleted, and unchanged
+- Implemented incremental synchronization with vector store: unchanged files are never re-fetched or re-embedded, modified/deleted files have old chunks purged, and newly added/modified chunks are embedded and indexed
+- Implemented multi-repo querying and cross-codebase RAG retrieval in `RAGEngine` (`answer_question` and `answer_multi_repo`), ranking chunks across repositories within context token budget with repo-annotated citations
+- Added unit and integration tests across `test_registry.py`, `test_incremental.py`, and `test_multi_repo.py` (112 unit tests passing in ~9.1s)
 
 ### ⬜ Phase 8 — Backend API layer (likely FastAPI)
 
