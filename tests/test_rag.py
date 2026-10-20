@@ -250,3 +250,63 @@ class TestRAGEngine:
         assert resp.citations[0].path == "run.py"
         assert resp.citations[0].start_line == 1
         assert resp.citations[0].end_line == 10
+
+    def test_rag_engine_context_budget_and_metadata(self):
+        mock_store = MagicMock()
+        mock_store.query.return_value = [
+            {
+                "path": f"app/file_{i}.py",
+                "start_line": 1,
+                "end_line": 20,
+                "language": "python",
+                "text": f"def test_{i}():\n    return {i}",
+                "similarity": 0.9 - (i * 0.05),
+            }
+            for i in range(10)
+        ]
+        fake_llm = FakeLLMProvider(canned_response="Answer based on file_0.")
+
+        engine = RAGEngine(
+            vector_store=mock_store,
+            llm_provider=fake_llm,
+            max_context_tokens=120,
+        )
+        resp = engine.answer_question("What files exist?")
+
+        assert resp.metadata["retrieved_count"] == 10
+        assert resp.metadata["selected_count"] < 10
+        assert resp.metadata["dropped_chunks_count"] > 0
+        assert resp.metadata["context_tokens"] <= 150
+        assert resp.metadata["reranked"] is True
+
+    def test_rag_engine_merges_overlapping_chunks(self):
+        mock_store = MagicMock()
+        mock_store.query.return_value = [
+            {
+                "path": "app/auth/routes.py",
+                "start_line": 10,
+                "end_line": 20,
+                "language": "python",
+                "text": "line10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20",
+                "similarity": 0.8,
+            },
+            {
+                "path": "app/auth/routes.py",
+                "start_line": 18,
+                "end_line": 25,
+                "language": "python",
+                "text": "line18\nline19\nline20\nline21\nline22\nline23\nline24\nline25",
+                "similarity": 0.85,
+            },
+        ]
+        fake_llm = FakeLLMProvider()
+
+        engine = RAGEngine(vector_store=mock_store, llm_provider=fake_llm)
+        resp = engine.answer_question("How is auth routed?")
+
+        # The two overlapping chunks should be merged into 1 chunk covering lines 10 to 25
+        assert len(resp.sources) == 1
+        assert resp.sources[0]["start_line"] == 10
+        assert resp.sources[0]["end_line"] == 25
+        assert "line10" in resp.sources[0]["text"]
+        assert "line25" in resp.sources[0]["text"]

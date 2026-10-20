@@ -95,8 +95,15 @@ language)
 - Added unit test suites `tests/test_llm.py` and `tests/test_rag.py` (61 unit tests passing in ~8s)
 - Added live integration test `tests/test_rag_integration.py` verifying real Gemini generation and citations
 
-### ⬜ Phase 6 — Prompt engineering / context assembly
-Rank/select chunks within token limits
+### ✅ Phase 6 — Prompt engineering / context assembly (complete)
+- Created token utilities in `src/rag/tokenizer.py` (`count_tokens`, `truncate_text_to_tokens`, `estimate_chunk_tokens`) using `tiktoken` (cl100k_base) with robust regex/heuristic fallbacks
+- Created multi-signal re-ranking engine in `src/rag/reranker.py` (`ReRanker`, `rerank_chunks`) combining semantic similarity with lexical keyword matches, file path relevance, and function/class definition detection
+- Created adjacent/overlapping chunk deduplication and merging in `src/rag/reranker.py` (`merge_overlapping_chunks`)
+- Created context budget assembler in `src/rag/context_assembler.py` (`ContextAssembler`, `assemble_context`) enforcing strict token budgets, line-aware chunk truncation, and attention-optimal "lost in the middle" alternating reordering
+- Enhanced prompt formatting in `src/rag/prompt.py` (`build_rag_prompt`, `format_code_context`) supporting both raw chunks and pre-budgeted context strings with truncation indicators
+- Integrated context assembler into `RAGEngine` (`src/rag/engine.py`) and `ask_codebase` with metadata tracking (`retrieved_count`, `selected_count`, `context_tokens`, `truncated_chunks_count`, `dropped_chunks_count`, `reranked`)
+- Pinned `tiktoken==0.14.0` in `requirements.txt`
+- Added comprehensive unit test suites `tests/test_tokenizer.py`, `tests/test_reranker.py`, and `tests/test_context_assembler.py` (87 unit tests passing in ~8.6s)
 
 ### ⬜ Phase 7 — Multi-repo support + incremental re-indexing
 

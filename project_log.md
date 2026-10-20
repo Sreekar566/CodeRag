@@ -105,6 +105,34 @@ Design options considered:
    - Choice made: Option B.
    - Why: Prevents hallucinations on unindexed or empty repositories, guarantees groundedness, and saves LLM token budget.
 
+## Phase 6: Prompt Engineering / Context Assembly — Complete
+What was built:
+- Token utilities in `src/rag/tokenizer.py`: `count_tokens`, `truncate_text_to_tokens`, `estimate_chunk_tokens` using `tiktoken` (`cl100k_base` encoding) with LRU caching and regex word/punctuation fallback heuristics.
+- Code-aware re-ranking in `src/rag/reranker.py`: `ReRanker` and `rerank_chunks` incorporating query keyword extraction (handling snake_case and camelCase identifiers), lexical overlap scoring, file path relevance scoring, and symbol definition detection (`def`, `class`, `function`, `const`).
+- Overlapping & adjacent chunk merging in `src/rag/reranker.py`: `merge_overlapping_chunks` automatically combines sliding-window chunks from the same file into unified snippets, eliminating duplicate context lines and expanding continuous code blocks.
+- Token budget & context assembly in `src/rag/context_assembler.py`: `ContextAssembler` and `assemble_context` enforcing configurable token limits (`max_context_tokens`, default 2048), line-preserving partial truncation of borderline chunks, and attention-optimal ("lost in the middle") alternating placement.
+- Prompt construction enhancements in `src/rag/prompt.py`: updated `build_rag_prompt` and `format_code_context` to handle pre-budgeted context blocks, numbered source blocks, and truncation warnings.
+- Integrated context assembly into `RAGEngine` in `src/rag/engine.py` and `ask_codebase` convenience function, populating metadata (`retrieved_count`, `selected_count`, `context_tokens`, `max_context_tokens`, `truncated_chunks_count`, `dropped_chunks_count`, `reranked`).
+- Pinned `tiktoken==0.14.0` in `requirements.txt`.
+- Unit test suites: `tests/test_tokenizer.py` (9 tests), `tests/test_reranker.py` (9 tests), `tests/test_context_assembler.py` (6 tests), plus RAG engine integration tests (87 passing unit tests in ~8.6s).
+
+Design options considered:
+1. Tokenizer implementation:
+   - Option A: Word-count approximation only (`len(text.split()) * 1.3`).
+   - Option B: `tiktoken` BPE tokenizer (`cl100k_base`) with graceful fallback to regex/word heuristics if unavailable.
+   - Choice made: Option B.
+   - Why: BPE tokenization accurately reflects modern LLM context limits (critical when handling code indentation, brackets, and syntax characters that word splitting grossly misestimates), while the heuristic fallback prevents hard crashes in restricted environments.
+2. Handling chunks exceeding remaining token budget:
+   - Option A: Strict hard drop (discard any chunk that doesn't fit in remaining tokens).
+   - Option B: Clean line-preserving truncation for the boundary chunk (if remaining tokens >= threshold), discarding only subsequent chunks.
+   - Choice made: Option B.
+   - Why: Maximizes token window utilization and allows relevant parts of a high-ranking chunk (e.g., function signature and top lines) into context rather than leaving an empty gap in the budget.
+3. Attention decay ("Lost in the Middle"):
+   - Option A: Retain naive descending rank order in context.
+   - Option B: Reorder selected chunks placing top-ranked snippets at the outermost edges (start and end of context) and lower-ranked snippets in the center.
+   - Choice made: Option B.
+   - Why: Empirical research confirms LLM retrieval attention is strongest at prompt boundaries (near instructions and user query) and degrades in the middle; alternating placement significantly reduces hallucination and improves answer accuracy.
+
 ## Deferred to later phases
 - Caching repeated ingestion (Phase 6/8)
 - Concurrency handling for many users (Phase 7)
