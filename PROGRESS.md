@@ -1,18 +1,19 @@
 # Progress Handoff
 
 ## Completed This Run
-- Installed and pinned `chromadb==1.5.9` and all dependencies in `requirements.txt`.
-- Created `src/storage/` module with swappable `VectorStore` interface (`base.py`) and collection name sanitization.
-- Built `ChromaVectorStore` (`chroma_store.py`) storing in `./data/chroma/` using cosine distance (`hnsw:space: cosine`), batch upserting, safe metadata sanitization, and structured result formatting.
-- Built `InMemoryVectorStore` (`memory_store.py`) with numpy cosine similarity as an alternative swappable backend.
-- Added `index_repository()` and `index_files()` in `src/storage/indexer.py` uniting ingestion, filtering, chunking, embedding, and vector storage into an automated pipeline with error handling.
-- Added `embed_query` and `embed_texts` in `src/embedding/embedder.py` with unit tests.
-- Wrote unit test suites `tests/test_storage.py` and `tests/test_indexer.py` (35 unit tests passing in ~8s).
-- Added integration test `tests/test_storage_integration.py` verifying real persistent Chroma vector indexing and semantic retrieval for code queries.
-- Completed Phase 4; updated `ROADMAP.md` and `project_log.md`.
+- Installed and pinned `google-genai==2.31.0` and dependencies in `requirements.txt`.
+- Built swappable `LLMProvider` interface in `src/llm/base.py` with `get_llm_provider()` factory controlled via `LLM_PROVIDER` env var.
+- Built `FakeLLMProvider` (`src/llm/fake.py`) for deterministic, offline testing with canned answers, history, and context extraction.
+- Built `GeminiLLMProvider` (`src/llm/gemini.py`) utilizing official `google-genai` SDK and `GEMINI_API_KEY`.
+- Built citation tracking and extraction in `src/rag/citations.py` (`Citation`, regex line citation parser, URL filtering).
+- Built prompt engineering context formatter in `src/rag/prompt.py` (`build_rag_prompt`, `format_code_context`).
+- Built RAG query engine in `src/rag/engine.py` (`RAGEngine`, `RAGResponse`, `ask_codebase`) connecting retrieval to LLM generation.
+- Created unit tests `tests/test_llm.py` and `tests/test_rag.py` (all 61 unit tests passing in ~8s).
+- Added live integration test `tests/test_rag_integration.py` verifying real Gemini generation and citations.
+- Completed Phase 5; updated `ROADMAP.md` and `project_log.md`.
 
 ## Next Steps (Prioritized)
-1. **Phase 5 — LLM Interface**: Implement swappable provider interface in `src/llm/` selected via `LLM_PROVIDER` env var (`fake` provider for tests, `gemini` via `google-genai` SDK using `GEMINI_API_KEY`).
-2. **Phase 5 — RAG Pipeline**: Connect semantic retrieval (`ChromaVectorStore.query`) to LLM prompt generation to answer natural-language code questions with file path and line range citations.
-3. **Phase 5 — Unit & Integration Tests**: Add unit tests using `fake` LLM provider verifying grounding, citation generation, and error handling.
-4. **Phase 6 — Context Assembly & Re-ranking**: Implement token-budget-aware chunk trimming and relevance ranking.
+1. **Phase 6 — Token Budget & Context Assembly**: Implement token-budget-aware chunk trimming (`tiktoken` / token counting), re-ranking, and context window optimization.
+2. **Phase 7 — Multi-repo Support & Incremental Indexing**: Add repository metadata tracking, multi-repo collection management, branch detection, and change-detection re-indexing.
+3. **Phase 8 — Backend API Layer**: Build FastAPI server exposing `/index`, `/query`, `/collections`, and health endpoints.
+4. **Phase 9 — Frontend UI**: Build Streamlit interface for repository exploration, querying, and interactive code citation inspection.
