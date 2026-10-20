@@ -174,6 +174,38 @@ Design options considered:
    - Choice made: Option B.
    - Why: Per-repo collections maintain clean isolation, make incremental re-indexing, clearing, and deleting trivial without expensive metadata filtering across massive indices, and prevent HNSW index degradation across hundreds of repos.
 
+## Phase 8: Backend API Layer — Complete
+What was built:
+- Dedicated `src/api/` package with modular FastAPI application and CLI runner (`python -m src.api.main`):
+  - `src/api/models.py`: Pydantic v2 schemas (`IndexRequest`, `QueryRequest`, `HealthResponse`, `RepoResponse`, `RepoListResponse`, `IndexResponse`, `QueryResponse`, `CitationModel`, `SourceChunkModel`, `CollectionResponse`, `CollectionListResponse`, `CollectionDetailResponse`, `ChangeSetResponse`, `DeleteResponse`, `ErrorResponse`).
+  - `src/api/dependencies.py`: Dependency injection providers (`get_registry`, `get_storage`, `get_llm`, `get_indexer`, `get_rag_engine`) enabling isolated overrides for test suites.
+  - Modular route handlers in `src/api/routes/`:
+    - `health.py`: `GET /health` reporting system status, vector store implementation, LLM model, registered repos count, and collection count.
+    - `repos.py`: `GET /repos` (list registered codebases), `GET /repos/{owner}/{repo}` (repository details), `DELETE /repos/{owner}/{repo}` (cascading removal from registry and vector store), `GET /repos/{owner}/{repo}/changes` (Git Merkle tree diff inspection without vector store modification).
+    - `index.py`: `POST /index` supporting both synchronous and asynchronous background execution (`background=true`, HTTP 202 Accepted) with concurrency lock contention detection (HTTP 409 Conflict).
+    - `query.py`: `POST /query` executing token-budgeted RAG retrieval across single or multiple codebases, returning answers, formatted citations, and ranked source chunks.
+    - `collections.py`: `GET /collections` (list collections and chunk counts), `GET /collections/{name}` (collection chunk count and sample code snippets), `DELETE /collections/{name}` (purge collection from vector store).
+  - `src/api/app.py`: FastAPI factory (`create_app`) with OpenAPI documentation (`/docs`, `/redoc`), root route `/`, and `CORSMiddleware` configured for cross-origin frontend communication.
+  - Pinned `fastapi==0.156.3` and `starlette==1.9.0` in `requirements.txt`.
+  - Comprehensive unit test suite `tests/test_api.py` (20 tests covering all endpoints, edge cases, error codes, and CORS headers; all passing in ~5.9s offline). Total project unit test suite: 132 tests passing.
+
+Design options considered:
+1. Long-running repository indexing API behavior:
+   - Option A: Only synchronous indexing blocking the HTTP connection until complete.
+   - Option B: Support both synchronous execution and asynchronous background task execution (`background=true`) via FastAPI's `BackgroundTasks`, returning HTTP 202 Accepted.
+   - Choice made: Option B.
+   - Why: Large repositories with hundreds of files can take tens of seconds to fetch, chunk, and embed, which causes standard HTTP client/proxy timeouts (typically 30-60s) and poor UI responsiveness. Background execution with status tracking in the registry provides resilient operations while preserving synchronous execution for small repos, scripts, and deterministic testing.
+2. API Layer dependency management:
+   - Option A: Global singletons imported directly inside route functions.
+   - Option B: FastAPI `Depends()` dependency injection system (`src/api/dependencies.py`).
+   - Choice made: Option B.
+   - Why: `Depends()` allows unit and integration tests to cleanly override services via `app.dependency_overrides` (e.g. substituting `InMemoryVectorStore` and `FakeLLMProvider` with zero disk or network overhead), preventing test pollution and ensuring fast execution.
+3. Repository deletion semantics:
+   - Option A: Only delete repository metadata from the registry, leaving vectors in storage.
+   - Option B: Cascade deletion: purge the associated collection from the vector store and remove metadata from the registry.
+   - Choice made: Option B.
+   - Why: Orphaned vector store collections consume disk space and memory and create discrepancies between the registry and storage. Atomic cascading deletion guarantees consistent state.
+
 ## Deferred to later phases
 - Caching repeated ingestion (Phase 8 API caching)
 - Async/parallel file fetching (optimization, post-MVP)

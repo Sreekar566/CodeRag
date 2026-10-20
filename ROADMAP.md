@@ -114,7 +114,22 @@ language)
 - Implemented multi-repo querying and cross-codebase RAG retrieval in `RAGEngine` (`answer_question` and `answer_multi_repo`), ranking chunks across repositories within context token budget with repo-annotated citations
 - Added unit and integration tests across `test_registry.py`, `test_incremental.py`, and `test_multi_repo.py` (112 unit tests passing in ~9.1s)
 
-### ⬜ Phase 8 — Backend API layer (likely FastAPI)
+### ✅ Phase 8 — Backend API layer (complete)
+- Created `src/api/` package with FastAPI application (`app.py`, `create_app`) and CLI runner (`main.py`)
+- Pydantic v2 request/response schemas (`src/api/models.py`) with strict validation:
+  - `IndexRequest`, `QueryRequest`, `HealthResponse`, `RepoResponse`, `RepoListResponse`, `IndexResponse`, `QueryResponse`, `CitationModel`, `SourceChunkModel`, `CollectionResponse`, `CollectionListResponse`, `CollectionDetailResponse`, `ChangeSetResponse`, `DeleteResponse`, `ErrorResponse`
+- Modular routing architecture (`src/api/routes/`):
+  - `GET /health` — health check reporting vector store type, active LLM provider, repo & collection counts
+  - `GET /repos` & `GET /repos/{owner}/{repo}` — list indexed repositories and retrieve metadata
+  - `DELETE /repos/{owner}/{repo}` — remove repository from registry and purge collection from vector store
+  - `GET /repos/{owner}/{repo}/changes` — preview pending GitHub tree changes without modifying vector store
+  - `POST /index` — synchronous or background (`background=true`, HTTP 202) repository indexing with lock conflict handling (HTTP 409)
+  - `POST /query` — codebase natural-language Q&A across single or multiple repositories with citations and token budgeting
+  - `GET /collections`, `GET /collections/{name}`, `DELETE /collections/{name}` — vector collection inspection and management
+- Dependency injection architecture (`src/api/dependencies.py`) supporting seamless `app.dependency_overrides` for offline testing
+- CORSMiddleware configured for cross-origin frontend support
+- Pinned `fastapi==0.156.3` and `starlette==1.9.0` in `requirements.txt`
+- Comprehensive unit test suite in `tests/test_api.py` (20 tests passing in ~5.9s; total 132 tests passing)
 
 ### ⬜ Phase 9 — Frontend/chat UI (likely Streamlit or React)
 
