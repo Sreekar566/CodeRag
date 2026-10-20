@@ -62,6 +62,31 @@ def embed_chunks(chunks: list[dict], model: Any = None) -> list[dict]:
     return chunks
 
 
+def embed_query(query: str, model: Any = None) -> list[float]:
+    """
+    Generate an embedding vector for a single query string.
+    """
+    if not query:
+        raise ValueError("Query string cannot be empty.")
+    active_model = model if model is not None else get_model()
+    embedding = active_model.encode(query)
+    return embedding.tolist() if hasattr(embedding, "tolist") else list(embedding)
+
+
+def embed_texts(texts: list[str], model: Any = None) -> list[list[float]]:
+    """
+    Generate embedding vectors for a batch of text strings.
+    """
+    if not texts:
+        return []
+    active_model = model if model is not None else get_model()
+    embeddings = active_model.encode(texts)
+    return [
+        emb.tolist() if hasattr(emb, "tolist") else list(emb)
+        for emb in embeddings
+    ]
+
+
 def __getattr__(name: str) -> Any:
     """Support accessing embedder.model lazily without breaking backwards compatibility."""
     if name == "model":

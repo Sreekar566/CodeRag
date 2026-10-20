@@ -47,6 +47,34 @@ Design options considered:
    - Choice made: Option B.
    - Why: Defense-in-depth: guarantees that any chunk passed to `embed_chunks()` carries language metadata before vector DB insertion in Phase 4.
 
+## Phase 4: Vector DB Storage & Semantic Retrieval — Complete
+What was built:
+- Abstract interface: `src/storage/base.py` defining `VectorStore` ABC (`add_chunks`, `query`, `query_by_embedding`, `get`, `count`, `clear`, `delete`, `list_collections`) and `sanitize_collection_name()`.
+- Chroma vector store: `src/storage/chroma_store.py` (`ChromaVectorStore`) with local persistent storage in `./data/chroma/`, cosine similarity (`hnsw:space: cosine`), batch upserting (batch size 500), metadata sanitization, and structured result formatting. Factory function `get_vector_store()`.
+- In-memory vector store: `src/storage/memory_store.py` (`InMemoryVectorStore`) using numpy cosine similarity for zero-dependency test runs and swappable backend validation.
+- Ingestion-to-storage pipeline: `src/storage/indexer.py` implementing `index_repository(owner, repo, token, ...)` and `index_files(files, ...)` connecting GitHub fetching, file filtering, chunking, embedding, and vector storage with error handling for skipped/corrupt files.
+- Embedding helpers: added `embed_query(query, model)` and `embed_texts(texts, model)` to `src/embedding/embedder.py`.
+- Unit tests: `tests/test_storage.py` and `tests/test_indexer.py` covering all CRUD operations, filtering, deterministic ID generation, sanitization, and error handling (35 unit tests pass in ~8s).
+- Integration test: `tests/test_storage_integration.py` verifying real persistent Chroma vector indexing and semantic retrieval for natural-language code queries.
+- Dependency management: pinned `chromadb==1.5.9` and all transitive dependencies in `requirements.txt`.
+
+Design options considered:
+1. Vector Store abstraction:
+   - Option A: Direct Chroma API calls embedded in ingestion and retrieval scripts.
+   - Option B: Generic `VectorStore` ABC with pluggable implementations (`ChromaVectorStore`, `InMemoryVectorStore`).
+   - Choice made: Option B.
+   - Why: Decouples vector DB specifics from ingestion and downstream RAG logic, enables fast unit testing without disk or DB overhead, and satisfies the requirement that the vector store must be swappable.
+2. Embedding generation for query and store:
+   - Option A: Rely on Chroma's built-in default embedding function.
+   - Option B: Pass `embedding_function=None` to Chroma and use our code-specialized embedder (`src/embedding/embedder.py`).
+   - Choice made: Option B.
+   - Why: Chroma's default embedding function tries to download a generic text ONNX model from the internet, violating offline unit test constraints and producing vector dimension mismatches against our 768-dim code embeddings. Disabling Chroma's internal embedder guarantees exact model alignment and zero network access during testing.
+3. Chunk ID strategy:
+   - Option A: Random UUIDs for each chunk.
+   - Option B: Deterministic, human-readable IDs formatted as `{path}:{start_line}-{end_line}` with index disambiguation.
+   - Choice made: Option B.
+   - Why: Deterministic IDs make `add_chunks` idempotent (re-indexing a repo or updating chunks overwrites the same keys rather than duplicating vectors), and make retrieved chunk IDs immediately interpretable for citation.
+
 ## Deferred to later phases
 - Caching repeated ingestion (Phase 6/8)
 - Concurrency handling for many users (Phase 7)
