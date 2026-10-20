@@ -83,8 +83,17 @@ language)
 - Pinned `chromadb==1.5.9` and its dependencies in `requirements.txt`
 - Verified end-to-end with unit tests (35 passing) and integration test confirming semantic search accuracy against real embeddings
 
-### ⬜ Phase 5 — RAG / Q&A engine
-Retrieve relevant chunks, feed to LLM, generate cited answers
+### ✅ Phase 5 — RAG / Q&A engine (complete)
+- Created `src/llm/` package with swappable `LLMProvider` interface (`base.py`) selected via `LLM_PROVIDER` env var (`fake`, `gemini`)
+- Built `FakeLLMProvider` (`fake.py`) for deterministic, offline testing with support for canned answers, callback functions, invocation history, and prompt context extraction
+- Built `GeminiLLMProvider` (`gemini.py`) using official `google-genai` SDK and `GEMINI_API_KEY`
+- Pinned `google-genai==2.31.0` and dependencies in `requirements.txt`
+- Created `src/rag/` package with `RAGEngine` (`engine.py`), structured `RAGResponse`, and `Citation` data models
+- Implemented grounded prompt assembly (`prompt.py`) formatting source chunks with file paths, line ranges, and language fences
+- Implemented citation extraction and fallback reconciliation (`citations.py`) parsing regex code line citations and filtering false positives (URLs)
+- Added high-level convenience function `ask_codebase`
+- Added unit test suites `tests/test_llm.py` and `tests/test_rag.py` (61 unit tests passing in ~8s)
+- Added live integration test `tests/test_rag_integration.py` verifying real Gemini generation and citations
 
 ### ⬜ Phase 6 — Prompt engineering / context assembly
 Rank/select chunks within token limits

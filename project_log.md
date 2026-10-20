@@ -75,6 +75,36 @@ Design options considered:
    - Choice made: Option B.
    - Why: Deterministic IDs make `add_chunks` idempotent (re-indexing a repo or updating chunks overwrites the same keys rather than duplicating vectors), and make retrieved chunk IDs immediately interpretable for citation.
 
+## Phase 5: RAG / Q&A Engine & LLM Interface — Complete
+What was built:
+- LLM Provider Abstraction: `src/llm/base.py` defining `LLMProvider` ABC (`generate`, `complete`) and `LLMResponse` dataclass.
+- Factory helper `get_llm_provider()` reading `LLM_PROVIDER` env var, falling back to Gemini if `GEMINI_API_KEY` exists, or `FakeLLMProvider` by default.
+- Fake LLM Provider: `src/llm/fake.py` (`FakeLLMProvider`) returning deterministic canned responses, tracking call count and prompt history, and extracting context lines from prompt for realistic grounded testing.
+- Gemini Provider: `src/llm/gemini.py` (`GeminiLLMProvider`) implementing Google GenAI integration via official `google-genai` SDK using `GEMINI_API_KEY` and configurable models (defaulting to `gemini-3.8-flash`).
+- Citation & Grounding Layer: `src/rag/citations.py` (`Citation` model, `extract_citations_from_text` with regex and URL filtering, and `citations_from_chunks`).
+- Prompt Context Assembly: `src/rag/prompt.py` (`DEFAULT_SYSTEM_PROMPT`, `format_code_context`, `build_rag_prompt`) formatting retrieved chunks into clear, fenced markdown blocks.
+- RAG Engine: `src/rag/engine.py` (`RAGEngine` and `ask_codebase()`) orchestrating semantic retrieval via `VectorStore.query`, zero-result handling without hallucinations, prompt construction, LLM generation, and citation reconciliation into a structured `RAGResponse`.
+- Unit tests: `tests/test_llm.py` (14 unit tests) and `tests/test_rag.py` (12 unit tests), bringing total unit test suite to 61 passing tests in ~8s without network or API keys.
+- Integration tests: `tests/test_rag_integration.py` verifying real Gemini generation and RAG retrieval when `GEMINI_API_KEY` is present.
+- Pinned `google-genai==2.31.0` and dependencies in `requirements.txt`.
+
+Design options considered:
+1. LLM Provider integration strategy:
+   - Option A: Couple the RAG engine directly to Google's SDK.
+   - Option B: Swappable `LLMProvider` interface with factory function and provider selection via `LLM_PROVIDER`.
+   - Choice made: Option B.
+   - Why: Core architectural requirement; decouples prompt generation and citation extraction from specific model providers, and allows unit tests to run fully offline with zero token costs and deterministic assertions.
+2. Citation extraction mechanism:
+   - Option A: Require structured JSON outputs from the LLM.
+   - Option B: Instruct LLM to cite in natural text (e.g. `path/to/file.py:10-25`) with regex parsing and fallback to retrieved chunk sources.
+   - Choice made: Option B.
+   - Why: JSON mode constrains reasoning and causes failures when models produce markdown or conversational context. Natural citation parsing with strict URL filtering handles both in-text citations and guarantees source attribution even when a model summarizes without repeating line numbers.
+3. Empty retrieval handling:
+   - Option A: Pass empty context to the LLM and let it answer from parametric memory.
+   - Option B: Short-circuit when 0 chunks are found, returning an explicit grounded message without calling the LLM.
+   - Choice made: Option B.
+   - Why: Prevents hallucinations on unindexed or empty repositories, guarantees groundedness, and saves LLM token budget.
+
 ## Deferred to later phases
 - Caching repeated ingestion (Phase 6/8)
 - Concurrency handling for many users (Phase 7)
