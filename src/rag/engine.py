@@ -15,6 +15,8 @@ from src.rag.citations import Citation, extract_citations_from_text, citations_f
 from src.rag.context_assembler import ContextAssembler, DEFAULT_MAX_CONTEXT_TOKENS
 from src.rag.prompt import DEFAULT_SYSTEM_PROMPT, build_rag_prompt
 from src.registry.registry import RepoRegistry, get_repo_registry
+from src.observability.models import StageTimer, calculate_llm_cost, QueryTelemetry
+from src.observability.collector import get_telemetry_collector
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +150,10 @@ class RAGEngine:
 
         is_multi_repo = len(target_specs) > 1
 
+        overall_timer = StageTimer().start()
+
         # Step 1: Semantic retrieval across all targets
+        retrieval_timer = StageTimer().start()
         raw_chunks: list[dict[str, Any]] = []
         for repo_label, col_name in target_specs:
             chunks = self.vector_store.query(
@@ -164,9 +169,11 @@ class RAGEngine:
                         c["metadata"] = {}
                     c["metadata"]["repo"] = repo_label
             raw_chunks.extend(chunks)
+        retrieval_ms = retrieval_timer.stop()
 
         # Step 2: Handle empty retrieval
         if not raw_chunks:
+            total_duration_ms = overall_timer.stop()
             if is_multi_repo:
                 col_display = ", ".join(t[1] for t in target_specs)
                 msg = f"No relevant code context was found in collections '{col_display}' to answer the question: '{trimmed_question}'."
@@ -174,6 +181,18 @@ class RAGEngine:
             else:
                 primary_col = target_specs[0][1]
                 msg = f"No relevant code context was found in collection '{primary_col}' to answer the question: '{trimmed_question}'."
+
+            telemetry = QueryTelemetry(
+                question=trimmed_question,
+                target_repos=[t[0] for t in target_specs],
+                model=model_name,
+                stage_latencies_ms={"retrieval": round(retrieval_ms, 2), "total": round(total_duration_ms, 2)},
+                total_duration_ms=total_duration_ms,
+                retrieved_count=0,
+                selected_count=0,
+                citations_count=0,
+            )
+            get_telemetry_collector().record_query(telemetry)
 
             return RAGResponse(
                 query=trimmed_question,
@@ -187,10 +206,16 @@ class RAGEngine:
                     "repositories": [t[0] for t in target_specs],
                     "retrieved_count": 0,
                     "status": "no_context",
+                    "duration_ms": round(total_duration_ms, 2),
+                    "elapsed_seconds": round(total_duration_ms / 1000.0, 3),
+                    "stage_durations_ms": {"retrieval": round(retrieval_ms, 2)},
+                    "estimated_cost_usd": 0.0,
+                    "query_id": telemetry.query_id,
                 },
             )
 
         # Step 3: Context assembly within token budget & re-ranking
+        assembly_timer = StageTimer().start()
         budget = max_context_tokens if max_context_tokens is not None else self.max_context_tokens
         do_rerank = rerank if rerank is not None else self.rerank
         do_merge = merge_overlapping if merge_overlapping is not None else self.merge_overlapping
@@ -204,26 +229,64 @@ class RAGEngine:
         assembly_result = assembler.assemble(trimmed_question, raw_chunks)
         selected_chunks = assembly_result.chunks
         formatted_context = assembly_result.formatted_context
+        assembly_ms = assembly_timer.stop()
 
         # Step 4: Construct prompt with code context
         user_prompt = build_rag_prompt(trimmed_question, formatted_context)
         sys_prompt = system_instruction or self.system_prompt
 
         # Step 5: Generate LLM response
+        generation_timer = StageTimer().start()
         llm_response = self.llm_provider.generate(
             prompt=user_prompt,
             system_instruction=sys_prompt,
             temperature=temperature,
             **kwargs,
         )
+        generation_ms = generation_timer.stop()
 
         # Step 6: Extract and reconcile citations
+        citations_timer = StageTimer().start()
         in_text_citations = extract_citations_from_text(llm_response.content)
         if in_text_citations:
             citations = in_text_citations
         else:
             # Fallback to citations directly from top assembled chunks
             citations = citations_from_chunks(selected_chunks)
+        citations_ms = citations_timer.stop()
+
+        total_duration_ms = overall_timer.stop()
+
+        # Step 7: Cost and telemetry calculation
+        estimated_cost_usd = calculate_llm_cost(
+            model_name=llm_response.model,
+            prompt_tokens=llm_response.prompt_tokens,
+            completion_tokens=llm_response.completion_tokens,
+        )
+
+        stage_latencies = {
+            "retrieval": round(retrieval_ms, 2),
+            "assembly_rerank": round(assembly_ms, 2),
+            "generation": round(generation_ms, 2),
+            "citations": round(citations_ms, 2),
+        }
+
+        telemetry = QueryTelemetry(
+            question=trimmed_question,
+            target_repos=[t[0] for t in target_specs],
+            model=llm_response.model,
+            stage_latencies_ms=stage_latencies,
+            total_duration_ms=total_duration_ms,
+            prompt_tokens=llm_response.prompt_tokens,
+            completion_tokens=llm_response.completion_tokens,
+            total_tokens=llm_response.total_tokens,
+            context_tokens=assembly_result.total_tokens,
+            cost_usd=estimated_cost_usd,
+            retrieved_count=len(raw_chunks),
+            selected_count=len(selected_chunks),
+            citations_count=len(citations),
+        )
+        get_telemetry_collector().record_query(telemetry)
 
         primary_col = target_specs[0][1] if len(target_specs) == 1 else "multi"
 
@@ -249,6 +312,11 @@ class RAGEngine:
                 "prompt_tokens": llm_response.prompt_tokens,
                 "completion_tokens": llm_response.completion_tokens,
                 "total_tokens": llm_response.total_tokens,
+                "duration_ms": round(total_duration_ms, 2),
+                "elapsed_seconds": round(total_duration_ms / 1000.0, 3),
+                "stage_durations_ms": stage_latencies,
+                "estimated_cost_usd": estimated_cost_usd,
+                "query_id": telemetry.query_id,
                 "llm_metadata": llm_response.metadata,
             },
         )

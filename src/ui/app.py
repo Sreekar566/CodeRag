@@ -18,6 +18,10 @@ from src.ui.components import (
     render_citations_panel,
     render_source_chunks,
     render_changes_details,
+    format_latency_pill,
+    format_cost_badge,
+    render_audit_log,
+    render_metrics_dashboard,
 )
 
 
@@ -161,10 +165,11 @@ with st.sidebar:
 # Main Navigation Tabs
 # ============================================================================
 
-tab_chat, tab_repos, tab_collections, tab_about = st.tabs([
+tab_chat, tab_repos, tab_collections, tab_observability, tab_about = st.tabs([
     "💬 Codebase Chat",
     "📦 Repositories & Ingestion",
     "🔍 Vector Collections",
+    "📊 Observability & Costs",
     "ℹ️ Architecture & About",
 ])
 
@@ -411,7 +416,7 @@ with tab_repos:
                         m4.metric("Last Indexed", format_timestamp(repo.get("indexed_at")))
 
                         # Action buttons
-                        b1, b2, b3 = st.columns(3)
+                        b1, b2, b3, b4 = st.columns(4)
                         with b1:
                             if st.button("🔍 Check Git Changes", key=f"changes_{full_name}"):
                                 with st.spinner("Checking remote GitHub tree for changes..."):
@@ -434,6 +439,15 @@ with tab_repos:
                                         st.error(f"Sync failed: {e.message}")
 
                         with b3:
+                            if st.button("📋 Filter Audit", key=f"audit_{full_name}"):
+                                with st.spinner(f"Loading filter audit for `{full_name}`..."):
+                                    try:
+                                        audit = client.get_repo_audit(owner, rname)
+                                        render_audit_log(audit)
+                                    except ApiClientError as e:
+                                        st.error(f"Audit log unavailable: {e.message}")
+
+                        with b4:
                             if st.button("🗑️ Delete Repository", key=f"del_{full_name}", type="secondary"):
                                 try:
                                     client.delete_repo(owner, rname)
@@ -501,7 +515,76 @@ with tab_collections:
 
 
 # ============================================================================
-# TAB 4: Architecture & About
+# TAB 4: Observability & Costs
+# ============================================================================
+
+with tab_observability:
+    st.header("📊 Observability & Cost Monitoring")
+    st.markdown(
+        "Real-time pipeline latency tracking, LLM token usage, query cost calculations, "
+        "and repository ingestion transparency audit logs."
+    )
+
+    if not backend_healthy:
+        st.warning("⚠️ Connect to the FastAPI backend to view telemetry and cost metrics.")
+    else:
+        # Header controls
+        top_c1, top_c2 = st.columns([4, 1])
+        with top_c2:
+            st_col_r1, st_col_r2 = st.columns(2)
+            with st_col_r1:
+                if st.button("🔄 Refresh", use_container_width=True):
+                    st.rerun()
+            with st_col_r2:
+                if st.button("🗑️ Reset", use_container_width=True, help="Clear query history"):
+                    try:
+                        client.reset_metrics()
+                        st.success("Reset metrics.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Reset failed: {e}")
+
+        try:
+            metrics_data = client.get_metrics()
+            queries_data = client.get_recent_queries(limit=50)
+
+            # 1. Main Telemetry Dashboard
+            render_metrics_dashboard(metrics_data, queries_data)
+
+            st.divider()
+
+            # 2. Ingestion Transparency Audit Section
+            st.subheader("🛡️ Repository Ingestion Transparency & Audit")
+            st.markdown(
+                "Inspect exactly how files in indexed repositories were evaluated by the blocklist filter, "
+                "verifying why files were kept for indexing or rejected (noise directories, binaries, oversized files)."
+            )
+
+            indexed_repos = client.list_repos()
+            if not indexed_repos:
+                st.info("No repositories indexed yet to inspect audit logs.")
+            else:
+                audit_options = [f"{r['owner']}/{r['repo']}" for r in indexed_repos]
+                selected_audit_repo = st.selectbox(
+                    "Select Repository to Inspect Filter Audit",
+                    options=audit_options,
+                    index=0,
+                )
+                if selected_audit_repo:
+                    parts = selected_audit_repo.split("/")
+                    if len(parts) == 2:
+                        try:
+                            audit_log = client.get_repo_audit(parts[0], parts[1])
+                            render_audit_log(audit_log)
+                        except ApiClientError as err:
+                            st.error(f"Failed to load audit log for `{selected_audit_repo}`: {err.message}")
+
+        except Exception as e:
+            st.error(f"Error fetching observability metrics: {e}")
+
+
+# ============================================================================
+# TAB 5: Architecture & About
 # ============================================================================
 
 with tab_about:

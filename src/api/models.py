@@ -182,3 +182,65 @@ class ErrorResponse(BaseModel):
     """Standardized error response schema."""
     detail: str
     code: str | None = None
+
+
+# ============================================================================
+# Observability & Cost Monitoring Models
+# ============================================================================
+
+class FilteredFileResponse(BaseModel):
+    """Metadata for a single file excluded during ingestion filtering."""
+    path: str
+    reason: str
+    rule_match: str
+    size_bytes: int | None = None
+
+
+class IngestionAuditResponse(BaseModel):
+    """Transparency audit log showing files evaluated during ingestion."""
+    repo_id: str
+    branch: str = "main"
+    commit_sha: str | None = None
+    timestamp: str
+    total_scanned: int = 0
+    total_kept: int = 0
+    total_filtered: int = 0
+    reason_counts: dict[str, int] = Field(default_factory=dict)
+    kept_files: list[str] = Field(default_factory=list)
+    filtered_files: list[FilteredFileResponse] = Field(default_factory=list)
+
+
+class QueryTelemetryResponse(BaseModel):
+    """Execution telemetry, timing breakdown, and cost for a codebase query."""
+    query_id: str
+    timestamp: str
+    question: str
+    target_repos: list[str] = Field(default_factory=list)
+    model: str
+    stage_latencies_ms: dict[str, float] = Field(default_factory=dict)
+    total_duration_ms: float = 0.0
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    context_tokens: int | None = None
+    cost_usd: float = 0.0
+    retrieved_count: int = 0
+    selected_count: int = 0
+    citations_count: int = 0
+    error: str | None = None
+
+
+class MetricsSummaryResponse(BaseModel):
+    """Aggregated operational telemetry and cost monitoring metrics."""
+    total_queries: int = 0
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_tokens: int = 0
+    total_cost_usd: float = 0.0
+    avg_total_latency_ms: float = 0.0
+    avg_stage_latencies_ms: dict[str, float] = Field(default_factory=dict)
+    p50_latency_ms: float = 0.0
+    p95_latency_ms: float = 0.0
+    p99_latency_ms: float = 0.0
+    error_count: int = 0
+    uptime_seconds: float = 0.0

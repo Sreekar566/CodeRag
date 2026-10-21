@@ -13,8 +13,11 @@ A production-grade, multi-repository code intelligence and question-answering sy
 - **Incremental Git Sync:** Uses Git Merkle tree blob SHAs to compute file diffs (`added`, `modified`, `deleted`, `unchanged`). Only modified and added files are re-chunked and embedded, saving rate limits and computation.
 - **Multi-Signal Re-Ranking & Context Budgeting:** Reranks chunks combining vector similarity, lexical keywords, file path relevance, and symbol definitions (`def`, `class`). Assembles context within strict token budgets using "lost-in-the-middle" alternating placement.
 - **Grounded LLM Q&A:** Pluggable LLM interface supporting Google Gemini (`gemini-3.8-flash`) and deterministic `fake` provider for offline testing. Cites exact file spans (`path/to/file.py:10-25`).
-- **REST API (FastAPI):** Comprehensive endpoints for repository management, indexing, background tasks, diff preview, collections, and multi-repo queries.
-- **Interactive Web UI (Streamlit):** Web interface for chat, grounded citation review, syntax-highlighted chunk inspection, incremental repo indexing, and Git diff checks.
+- **Pipeline Observability & Latency Profiling:** High-precision monotonic stage timing breaking down query execution across retrieval, context assembly/reranking, LLM generation, and citation extraction.
+- **LLM Token & Cost Monitoring:** Automated token usage accounting and per-query USD cost tracking with model-specific pricing catalogs and percentile metrics (p50, p95, p99).
+- **Ingestion Transparency & Audit Logs:** Complete audit trail tracking every file evaluated during ingestion, logging why each file was kept or filtered out (noise directory, noise extension, oversized file).
+- **REST API (FastAPI):** Comprehensive endpoints for repository management, indexing, background tasks, diff preview, collections, multi-repo queries, system metrics, and audit logs.
+- **Interactive Web UI (Streamlit):** Web interface for chat, grounded citation review, syntax-highlighted chunk inspection, incremental repo indexing, Git diff checks, and observability dashboard.
 
 ---
 
@@ -97,9 +100,10 @@ Start both the backend server and frontend interface:
    Open `http://localhost:8501` in your browser.
 
 In the Web UI:
-- **💬 Codebase Chat:** Ask natural language questions, inspect grounded citations (`path/to/file.py:10-25`), and view syntax-highlighted source chunks.
-- **📦 Repositories & Ingestion:** Ingest any GitHub repository (e.g. `miguelgrinberg/microblog`), check pending Git diffs, or execute incremental re-indexing.
+- **💬 Codebase Chat:** Ask natural language questions, inspect grounded citations (`path/to/file.py:10-25`), view syntax-highlighted source chunks, and view latency breakdown and estimated query cost.
+- **📦 Repositories & Ingestion:** Ingest any GitHub repository (e.g. `miguelgrinberg/microblog`), check pending Git diffs, view file filtering audit logs, or execute incremental re-indexing.
 - **🔍 Vector Collections:** Browse stored vector collections, sample chunks, and inspect code metadata.
+- **📊 Observability & Costs:** Real-time metrics dashboard tracking total queries, tokens consumed, estimated API cost in USD, pipeline stage latency distributions (retrieval, assembly, generation, citations), recent query logs, and repository file filter audit inspector.
 
 ---
 
@@ -123,6 +127,15 @@ With the backend running (`python -m src.api.main`):
   curl -X POST http://localhost:8000/query \
        -H "Content-Type: application/json" \
        -d '{"question": "How is user authentication handled?", "repo": "miguelgrinberg/microblog"}'
+  ```
+- **System Metrics & Cost Monitoring:**
+  ```bash
+  curl http://localhost:8000/metrics
+  curl http://localhost:8000/metrics/queries?limit=10
+  ```
+- **Repository Ingestion Audit Log:**
+  ```bash
+  curl http://localhost:8000/repos/miguelgrinberg/microblog/audit
   ```
 
 ---

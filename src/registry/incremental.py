@@ -14,13 +14,14 @@ from src.ingestion.github_client import (
     get_default_branch,
     get_latest_commit_sha,
 )
-from src.ingestion.filters import filter_files
+from src.ingestion.filters import filter_files, audit_filter_files
 from src.ingestion.chunker import chunk_text
 from src.embedding.embedder import embed_chunks
 from src.storage.base import VectorStore, sanitize_collection_name
 from src.storage.chroma_store import get_vector_store
 from src.registry.models import ChangeSet, IncrementalIndexResult, RepositoryMetadata
 from src.registry.registry import RepoRegistry, get_repo_registry
+from src.observability.collector import get_telemetry_collector
 
 logger = logging.getLogger(__name__)
 
@@ -163,9 +164,16 @@ class IncrementalIndexer:
             # Mark repository as indexing
             self.registry.update_status(owner, repo, status="indexing")
 
-            # Step 3: Fetch file tree and filter
+            # Step 3: Fetch file tree and filter with transparency audit
             tree = get_repo_tree(owner, repo, token, branch=resolved_branch)
-            filtered_items = filter_files(tree)
+            repo_id = f"{owner}/{repo}"
+            filtered_items, audit_log = audit_filter_files(
+                tree,
+                repo_id=repo_id,
+                branch=resolved_branch,
+                commit_sha=latest_commit_sha,
+            )
+            get_telemetry_collector().record_audit(audit_log)
 
             current_file_shas = {
                 item["path"]: item.get("sha", "")
@@ -280,6 +288,7 @@ class IncrementalIndexer:
                 file_shas=current_file_shas,
                 status="ready",
                 error=None,
+                metadata={"audit_log": audit_log.to_dict()},
             )
             self.registry.register(new_meta)
 
@@ -303,6 +312,7 @@ class IncrementalIndexer:
                 total_tree_files=len(tree),
                 filtered_files=len(filtered_items),
                 skipped_files=skipped_files,
+                audit_log=audit_log.to_dict(),
             )
 
         except Exception as e:

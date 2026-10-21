@@ -7,11 +7,12 @@ import logging
 from typing import Any, Callable
 
 from src.ingestion.github_client import get_repo_tree, get_file_content, get_default_branch
-from src.ingestion.filters import filter_files
+from src.ingestion.filters import filter_files, audit_filter_files
 from src.ingestion.chunker import chunk_text
 from src.embedding.embedder import embed_chunks
 from src.storage.base import VectorStore, sanitize_collection_name
 from src.storage.chroma_store import get_vector_store
+from src.observability.collector import get_telemetry_collector
 
 logger = logging.getLogger(__name__)
 
@@ -116,8 +117,14 @@ def index_repository(
     # Step 1: List all files
     tree = get_repo_tree(owner, repo, token, branch=branch)
 
-    # Step 2: Apply filter blocklist
-    filtered_items = filter_files(tree)
+    # Step 2: Apply filter blocklist with transparency audit tracking
+    repo_id = f"{owner}/{repo}"
+    filtered_items, audit_log = audit_filter_files(
+        tree,
+        repo_id=repo_id,
+        branch=branch,
+    )
+    get_telemetry_collector().record_audit(audit_log)
 
     # Step 3: Fetch contents and chunk
     files: list[dict[str, str]] = []
@@ -149,6 +156,7 @@ def index_repository(
         "total_tree_files": len(tree),
         "filtered_files": len(filtered_items),
         "skipped_files": skipped_files,
+        "audit_log": audit_log.to_dict(),
     })
 
     if registry is not None:
@@ -165,6 +173,7 @@ def index_repository(
                 chunk_count=result.get("chunks_stored", 0),
                 file_shas={item["path"]: item.get("sha", "") for item in filtered_items if "path" in item},
                 status="ready",
+                metadata={"audit_log": audit_log.to_dict()},
             )
         )
 

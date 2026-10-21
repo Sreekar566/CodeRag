@@ -13,6 +13,7 @@ from src.registry.registry import RepoRegistry, get_repo_registry
 from src.registry.incremental import IncrementalIndexer
 from src.llm.base import LLMProvider, get_llm_provider
 from src.rag.engine import RAGEngine
+from src.observability.collector import TelemetryCollector, get_telemetry_collector
 
 # Module-level singletons (lazily initialized)
 _GLOBAL_REGISTRY: RepoRegistry | None = None
@@ -59,6 +60,11 @@ def get_rag_engine(
 ) -> RAGEngine:
     """Dependency provider for the RAGEngine."""
     return RAGEngine(vector_store=storage, llm_provider=llm, registry=registry)
+
+
+def get_telemetry() -> TelemetryCollector:
+    """Dependency provider for the TelemetryCollector."""
+    return get_telemetry_collector()
 
 
 def set_global_dependencies(

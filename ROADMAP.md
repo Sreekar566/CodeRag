@@ -192,7 +192,29 @@ language)
 - Comprehensive unit test suite `tests/test_deployment.py` (6 unit tests, total 175 tests passing)
 - Updated documentation in `README.md` with Docker and Docker Compose instructions
 
-### ⬜ Phase 12 — Observability, cost monitoring, docs/demo polish
+### ✅ Phase 12 — Observability, cost monitoring, docs/demo polish (complete)
+- Created dedicated `src/observability/` package:
+  - `models.py`: `StageTimer` high-precision context stopwatch, `PricingConfig` catalog and `calculate_llm_cost` formula supporting Gemini Flash ($0.15/1M prompt, $0.60/1M completion), Gemini Pro, and Fake models, `QueryTelemetry` recording query IDs, timestamps, stage breakdowns, token usage, and cost, `FilteredFileRecord` and `IngestionAuditLog` with Markdown summaries, and `MetricsSummary` with p50/p95/p99 latency calculations.
+  - `collector.py`: Thread-safe in-memory `TelemetryCollector` with rolling query deque, repository audit index, aggregate percentile statistics, and singleton `get_telemetry_collector()`.
+- Pipeline stage latency profiling & cost tracking in `RAGEngine` (`src/rag/engine.py`):
+  - Measures sub-millisecond durations across retrieval, context assembly/reranking, LLM generation, and citation extraction.
+  - Enriches `RAGResponse.metadata` with `duration_ms`, `elapsed_seconds`, `stage_durations_ms`, `estimated_cost_usd`, and `query_id`.
+  - Automatically records query telemetry to the global collector.
+- Repository ingestion transparency and audit logging:
+  - Added `classify_file` and `audit_filter_files` in `src/ingestion/filters.py` classifying every file by blocklist category (`noise_directory`, `noise_extension`, `file_too_large`) with exact rule match while preserving 100% backwards compatibility for `filter_files()`.
+  - Integrated into `src/storage/indexer.py` and `src/registry/incremental.py` (`IncrementalIndexer`), saving audit logs to telemetry collector and persistent `RepositoryMetadata` metadata.
+- Backend REST API endpoints (`src/api/routes/observability.py`):
+  - `GET /metrics`: Aggregated system metrics (total queries, tokens, total cost USD, average latencies, p50/p95/p99 percentiles).
+  - `GET /metrics/queries`: Rolling recent query telemetry logs.
+  - `GET /repos/{owner}/{repo}/audit`: File-filtering transparency audit log for indexed repositories.
+  - `DELETE /metrics`: Telemetry and query history reset.
+- Streamlit Web Dashboard integration (`src/ui/app.py`, `src/ui/components.py`, `src/ui/client.py`):
+  - Added 📊 **Observability & Costs** tab featuring 4 KPI metric cards, pipeline stage latency distributions, recent query log table, and repository file filter audit inspector.
+  - Added latency pill and query cost badge to **Codebase Chat** assistant message captions.
+  - Added "📋 Filter Audit" button in **Repositories & Ingestion** tab.
+  - Added `get_metrics()`, `get_recent_queries()`, `get_repo_audit()`, and `reset_metrics()` in `ApiClient`.
+- Unit test suite: `tests/test_observability.py` (19 comprehensive unit tests, total project test suite: 194 tests passing in ~16s).
+- Full documentation updated in `README.md` and `project_log.md`. All phases 0–12 complete!
 
 ## Tech Stack
 - **Confirmed:** Python, GitHub REST API, venv

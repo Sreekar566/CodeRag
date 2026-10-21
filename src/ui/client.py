@@ -224,3 +224,27 @@ class ApiClient:
         Purge a vector collection from storage.
         """
         return self._request("DELETE", f"/collections/{name}")
+
+    def get_metrics(self) -> dict[str, Any]:
+        """
+        Retrieve system metrics summary including latency, token usage, and costs.
+        """
+        return self._request("GET", "/metrics")
+
+    def get_recent_queries(self, limit: int = 50) -> list[dict[str, Any]]:
+        """
+        Retrieve recent query telemetry and profiling records.
+        """
+        return self._request("GET", "/metrics/queries", params={"limit": limit})
+
+    def get_repo_audit(self, owner: str, repo: str) -> dict[str, Any]:
+        """
+        Retrieve ingestion file-filtering transparency audit log for a repository.
+        """
+        return self._request("GET", f"/repos/{owner}/{repo}/audit")
+
+    def reset_metrics(self) -> dict[str, Any]:
+        """
+        Reset in-memory query telemetry and performance counters.
+        """
+        return self._request("DELETE", "/metrics")

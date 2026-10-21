@@ -60,9 +60,16 @@ def format_metrics(metadata: dict[str, Any] | None) -> str:
     if metadata.get("reranked"):
         parts.append("Re-ranked: Yes")
 
+    duration_ms = metadata.get("duration_ms")
     elapsed = metadata.get("elapsed_seconds")
-    if elapsed is not None:
+    if duration_ms is not None:
+        parts.append(f"Time: {duration_ms:.0f}ms")
+    elif elapsed is not None:
         parts.append(f"Time: {elapsed:.2f}s")
+
+    cost = metadata.get("estimated_cost_usd")
+    if cost is not None:
+        parts.append(f"Cost: ${cost:.6f}" if cost > 0 else "Cost: $0.00")
 
     return " | ".join(parts) if parts else ""
 
@@ -213,3 +220,119 @@ def render_changes_details(changes: dict[str, Any]) -> None:
             st.caption(f"...and {len(deleted) - 15} more")
 
     st.caption(f"Unchanged files: {len(unchanged)} (will not be re-embedded)")
+
+
+def format_latency_pill(
+    duration_ms: float | None,
+    stage_durations: dict[str, float] | None = None,
+) -> str:
+    """Format total latency and stage breakdown into a readable pill."""
+    if duration_ms is None:
+        return ""
+    if not stage_durations:
+        return f"⏱️ {duration_ms:.1f} ms"
+
+    stages = []
+    if "retrieval" in stage_durations:
+        stages.append(f"Retrieval: {stage_durations['retrieval']:.1f}ms")
+    if "generation" in stage_durations:
+        stages.append(f"Generation: {stage_durations['generation']:.1f}ms")
+
+    stage_str = f" ({' | '.join(stages)})" if stages else ""
+    return f"⏱️ {duration_ms:.1f} ms{stage_str}"
+
+
+def format_cost_badge(cost_usd: float | None) -> str:
+    """Format query cost into a badge."""
+    if cost_usd is None or cost_usd == 0:
+        return "💰 $0.00"
+    return f"💰 ${cost_usd:.6f}"
+
+
+def render_audit_log(audit: dict[str, Any]) -> None:
+    """Render repository ingestion transparency audit log in Streamlit."""
+    total_scanned = audit.get("total_scanned", 0)
+    total_kept = audit.get("total_kept", 0)
+    total_filtered = audit.get("total_filtered", 0)
+    reason_counts = audit.get("reason_counts", {})
+    filtered_files = audit.get("filtered_files", [])
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Scanned", f"{total_scanned:,}")
+    c2.metric("Files Kept (Indexed)", f"{total_kept:,}")
+    c3.metric("Files Filtered Out", f"{total_filtered:,}")
+
+    if reason_counts:
+        st.markdown("**Filter Reason Breakdown:**")
+        cols = st.columns(len(reason_counts))
+        for col, (reason, count) in zip(cols, sorted(reason_counts.items(), key=lambda x: -x[1])):
+            friendly_name = reason.replace("_", " ").title()
+            col.metric(friendly_name, f"{count:,}")
+
+    if filtered_files:
+        with st.expander(f"🔍 Inspect Filtered Files ({len(filtered_files)} files)", expanded=False):
+            search = st.text_input("Filter paths...", key=f"audit_search_{audit.get('repo_id', '')}")
+            displayed = filtered_files
+            if search:
+                displayed = [f for f in filtered_files if search.lower() in f.get("path", "").lower()]
+
+            table_rows = []
+            for f in displayed[:100]:
+                size_str = f"{f.get('size_bytes', 0):,} B" if f.get("size_bytes") is not None else "N/A"
+                table_rows.append({
+                    "Path": f.get("path"),
+                    "Reason": f.get("reason"),
+                    "Rule Matched": f.get("rule_match"),
+                    "Size": size_str,
+                })
+            if table_rows:
+                st.dataframe(table_rows, use_container_width=True)
+                if len(displayed) > 100:
+                    st.caption(f"Showing first 100 of {len(displayed)} matching files.")
+            else:
+                st.info("No matching files found.")
+
+
+def render_metrics_dashboard(metrics: dict[str, Any], queries: list[dict[str, Any]]) -> None:
+    """Render overall observability & cost monitoring telemetry dashboard."""
+    m1, m2, m3, m4 = st.columns(4)
+    total_q = metrics.get("total_queries", 0)
+    total_tokens = metrics.get("total_tokens", 0)
+    total_cost = metrics.get("total_cost_usd", 0.0)
+    avg_latency = metrics.get("avg_total_latency_ms", 0.0)
+
+    m1.metric("Total Queries", f"{total_q:,}")
+    m2.metric("Tokens Consumed", f"{total_tokens:,}")
+    m3.metric("Estimated Cost", f"${total_cost:.5f}")
+    m4.metric("Avg Latency", f"{avg_latency:.1f} ms", f"p95: {metrics.get('p95_latency_ms', 0):.1f} ms")
+
+    st.divider()
+
+    # Latency Stage Breakdown
+    stage_latencies = metrics.get("avg_stage_latencies_ms", {})
+    if stage_latencies and any(v > 0 for v in stage_latencies.values()):
+        st.subheader("⚡ Latency by Pipeline Stage")
+        sc1, sc2, sc3, sc4 = st.columns(4)
+        sc1.metric("Semantic Retrieval", f"{stage_latencies.get('retrieval', 0):.1f} ms")
+        sc2.metric("Context & Rerank", f"{stage_latencies.get('assembly_rerank', 0):.1f} ms")
+        sc3.metric("LLM Generation", f"{stage_latencies.get('generation', 0):.1f} ms")
+        sc4.metric("Citation Extraction", f"{stage_latencies.get('citations', 0):.1f} ms")
+
+    # Recent Queries Log
+    st.subheader("📋 Recent Query Activity")
+    if queries:
+        query_rows = []
+        for q in queries:
+            query_rows.append({
+                "Timestamp": format_timestamp(q.get("timestamp")),
+                "Question": q.get("question", "")[:60] + "..." if len(q.get("question", "")) > 60 else q.get("question", ""),
+                "Model": q.get("model", ""),
+                "Duration": f"{q.get('total_duration_ms', 0):.1f} ms",
+                "Tokens": q.get("total_tokens") or "N/A",
+                "Cost ($)": f"${q.get('cost_usd', 0.0):.6f}",
+                "Citations": q.get("citations_count", 0),
+            })
+        st.dataframe(query_rows, use_container_width=True)
+    else:
+        st.info("No queries executed yet. Ask questions in the **Codebase Chat** tab to populate telemetry.")
+

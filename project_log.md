@@ -322,7 +322,60 @@ Design options considered:
    - Choice made: Option B.
    - Why: Resource optimization requirement; prevents downloading gigabytes of GPU drivers into container images and CI runners, reducing image footprint by >2 GB and dramatically speeding up build and CI pipeline execution.
 
-## Deferred to later phases
+## Phase 12: Observability, Cost Monitoring, Docs & Polish — Complete
+What was built:
+- Dedicated observability package `src/observability/`:
+  - `src/observability/models.py`:
+    - `StageTimer`: precision stopwatch context manager using monotonic performance counters (`time.perf_counter`) to record sub-millisecond durations.
+    - `PricingConfig` & `calculate_llm_cost`: model pricing catalog supporting Gemini 3.8 Flash ($0.15/1M prompt, $0.60/1M completion), Gemini 1.5 Pro ($1.25/1M prompt, $5.00/1M completion), Fake model ($0.00), and configurable fallbacks.
+    - `QueryTelemetry`: structured execution record capturing query ID, UTC timestamp, target repos, model, stage latency breakdowns (`retrieval`, `assembly_rerank`, `generation`, `citations`), token counts (prompt, completion, context), estimated cost USD, retrieved/selected chunk counts, and citation counts.
+    - `FilteredFileRecord` & `IngestionAuditLog`: transparency log recording every file evaluated during repository ingestion, tracking why files were kept or filtered out (`noise_directory`, `noise_extension`, `file_too_large`), matched rules, and byte sizes, with export to dict, JSON, and GitHub Flavored Markdown summary tables.
+    - `MetricsSummary`: system-wide aggregate performance metrics including query count, total tokens, total cost, average stage latencies, and percentile latency calculations (p50, p95, p99).
+  - `src/observability/collector.py`:
+    - `TelemetryCollector`: thread-safe in-memory metrics collector storing a rolling window of query telemetries and persistent repository ingestion audit records with percentile math and global singleton `get_telemetry_collector()`.
+- Pipeline stage profiling and cost integration in `RAGEngine` (`src/rag/engine.py`):
+  - Instruments query pipeline into discrete stages: semantic retrieval, context assembly and re-ranking, LLM generation, and citation extraction.
+  - Automatically calculates token expenditure and query cost in USD.
+  - Enriches `RAGResponse.metadata` with `duration_ms`, `elapsed_seconds`, `stage_durations_ms`, `estimated_cost_usd`, and `query_id`.
+  - Automatically records query telemetry into the central telemetry collector.
+- Ingestion transparency and audit log integration:
+  - Added `classify_file` and `audit_filter_files` in `src/ingestion/filters.py`, maintaining 100% backwards compatibility for `filter_files()`.
+  - Integrated into `src/storage/indexer.py` (`index_repository`) and `src/registry/incremental.py` (`IncrementalIndexer.index_repository`).
+  - Stores audit logs in `TelemetryCollector` and persists them in repository metadata (`RepositoryMetadata.metadata["audit_log"]`).
+- REST API Endpoints (`src/api/routes/observability.py`):
+  - `GET /metrics`: Aggregated system operational metrics and latency percentiles.
+  - `GET /metrics/queries`: Rolling query performance and cost logs.
+  - `GET /repos/{owner}/{repo}/audit`: File-filtering transparency audit log for indexed repositories.
+  - `DELETE /metrics`: Reset in-memory telemetry counters.
+- Streamlit Web Dashboard integration (`src/ui/app.py`, `src/ui/components.py`, `src/ui/client.py`):
+  - Added 📊 **Observability & Costs** tab with KPI cards (Queries, Tokens, Cost, Avg/p95 Latency), stage breakdown metrics, recent query activity table, and searchable ingestion audit inspector.
+  - Added latency pill and query cost display to assistant responses in **Codebase Chat**.
+  - Added "📋 Filter Audit" button in **Repositories & Ingestion**.
+  - Extended `ApiClient` with `get_metrics()`, `get_recent_queries()`, `get_repo_audit()`, and `reset_metrics()`.
+- Documentation & Demo Polish:
+  - Updated root `README.md` with complete Observability, Cost Monitoring, and Ingestion Transparency documentation and API examples.
+  - Marked Phase 12 as complete in `ROADMAP.md`.
+- Comprehensive unit test suite:
+  - `tests/test_observability.py`: 19 tests covering `StageTimer`, pricing models, audit logs, `TelemetryCollector` percentiles and lifecycles, `RAGEngine` instrumentation, API endpoints, and UI client/formatters.
+  - Full test suite: 194 unit tests passing offline in ~16s.
+
+Design options considered:
+1. In-process vs. external observability backend (Prometheus/OpenTelemetry vs. in-memory collector):
+   - Option A: Require external Prometheus / OpenTelemetry daemon running alongside the system.
+   - Option B: Built-in thread-safe Python telemetry collector with REST API endpoints (`/metrics`, `/metrics/queries`) and optional export capabilities.
+   - Choice made: Option B.
+   - Why: Avoids heavyweight external operational dependencies and network daemons for local/containerized deployments while providing instant visibility directly within the Streamlit UI and FastAPI endpoints.
+2. Token usage and cost calculation location:
+   - Option A: Estimate cost asynchronously in a background batch job.
+   - Option B: Calculate cost synchronously within `RAGEngine` immediately following generation using the provider's token usage metadata and a model pricing catalog.
+   - Choice made: Option B.
+   - Why: Developers and users need immediate feedback on query cost and token consumption directly in the response metadata and UI chat message captions.
+3. Ingestion filter audit trail storage:
+   - Option A: Log filter decisions only to stdout/stderr via Python `logging`.
+   - Option B: Construct structured `IngestionAuditLog` objects, store them in the telemetry collector, and persist them inside `RepositoryMetadata` in `registry.json`.
+   - Choice made: Option B.
+   - Why: Logging to stderr is transient and difficult for end users to inspect. Structured persistence allows users to query `GET /repos/{owner}/{repo}/audit` or inspect the audit breakdown in the Streamlit UI to verify why specific files were excluded.
+
+## Deferred to future post-roadmap enhancements
 - Caching repeated ingestion (Phase 8 API caching)
 - Async/parallel file fetching (optimization, post-MVP)
-- Post-ingestion transparency/audit log showing what was filtered and why, for user inspection (Phase 12)

@@ -6,6 +6,7 @@ from src.api.routes.repos import router as repos_router
 from src.api.routes.index import router as index_router
 from src.api.routes.query import router as query_router
 from src.api.routes.collections import router as collections_router
+from src.api.routes.observability import router as observability_router
 
 __all__ = [
     "health_router",
@@ -13,4 +14,5 @@ __all__ = [
     "index_router",
     "query_router",
     "collections_router",
+    "observability_router",
 ]

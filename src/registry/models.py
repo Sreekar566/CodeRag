@@ -130,6 +130,7 @@ class IncrementalIndexResult:
     filtered_files: int = 0
     skipped_files: list[str] = field(default_factory=list)
     error: str | None = None
+    audit_log: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize result to a dictionary."""
@@ -152,4 +153,5 @@ class IncrementalIndexResult:
             "filtered_files": self.filtered_files,
             "skipped_files": self.skipped_files,
             "error": self.error,
+            "audit_log": self.audit_log,
         }
