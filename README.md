@@ -156,7 +156,53 @@ for citation in response.citations:
 
 ---
 
-## Benchmark Evaluation Framework
+### Option 4: Docker & Docker Compose
+
+The platform is fully containerized with CPU-only PyTorch and multi-service topology:
+
+1. **Start Full Stack with Docker Compose:**
+   ```bash
+   # Set your environment variables (or define in .env)
+   export GITHUB_TOKEN="ghp_your_token"
+   export GEMINI_API_KEY="your_gemini_key"
+   export LLM_PROVIDER="gemini"
+
+   # Build and start FastAPI backend + Streamlit UI
+   docker compose up --build
+   ```
+
+   - **Backend API:** Available at `http://localhost:8000` (Swagger UI at `/docs`)
+   - **Frontend UI:** Available at `http://localhost:8501`
+   - **Persistent Volume:** Vector database and repo registry persist in the `codebase_data` volume.
+
+2. **Run Standalone Docker Container:**
+   ```bash
+   # Build image
+   docker build -t ai-codebase-intel:latest .
+
+   # Launch FastAPI backend
+   docker run -d --name codebase-api -p 8000:8000 \
+     -v $(pwd)/data:/app/data \
+     -e GITHUB_TOKEN="ghp_your_token" \
+     -e GEMINI_API_KEY="your_gemini_key" \
+     ai-codebase-intel:latest api
+
+   # Launch Streamlit UI connected to backend
+   docker run -d --name codebase-ui -p 8501:8501 \
+     -e API_BASE_URL="http://localhost:8000" \
+     ai-codebase-intel:latest ui
+   ```
+
+---
+
+## Continuous Integration & CI/CD
+
+A production-ready GitHub Actions CI pipeline is configured in `.github/workflows/ci.yml`:
+- **Automated Testing:** Sets up Python 3.12, installs CPU PyTorch and pinned dependencies, and executes the complete offline test suite (`pytest -v`).
+- **Container Validation:** Verifies `docker-compose.yml` configuration and validates Docker image builds using Buildx.
+- **Branch Triggers:** Executes on every `push` and `pull_request` targeting `main` and `master`.
+
+---
 
 The platform includes an automated evaluation framework to measure retrieval accuracy (Hit Rate@K, MRR, Precision@K, Recall@K), citation grounding fidelity, and hallucination / abstention rates against benchmark questions:
 

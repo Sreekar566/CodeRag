@@ -11,7 +11,7 @@ import chromadb
 
 from src.storage.base import VectorStore, sanitize_collection_name
 
-DEFAULT_CHROMA_PATH = "./data/chroma"
+DEFAULT_CHROMA_PATH = os.getenv("CHROMA_PERSIST_DIRECTORY", "./data/chroma")
 DEFAULT_COLLECTION_NAME = "codebase"
 BATCH_SIZE = 500
 

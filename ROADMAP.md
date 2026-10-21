@@ -168,7 +168,29 @@ language)
   - Average Latency: 334.1 ms
 - Comprehensive unit test suite `tests/test_evaluation.py` (17 tests passing in ~8s offline; total 169 unit tests passing) and integration test `tests/test_evaluation_integration.py`.
 
-### ⬜ Phase 11 — Testing, CI/CD, containerization, deployment
+### ✅ Phase 11 — Testing, CI/CD, containerization, deployment (complete)
+- Created production-ready `Dockerfile`:
+  - Based on `python:3.12-slim` with `PYTHONUNBUFFERED=1` and minimal footprint
+  - Non-root security user `appuser:appgroup` (UID/GID 1000)
+  - Installs CPU-only PyTorch wheel first (`pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu`)
+  - Installs pinned dependencies from `requirements.txt`
+  - Multi-service entrypoint supporting `api`, `ui`, `eval`, and `test`
+  - Exposes port 8000 (FastAPI backend) and 8501 (Streamlit frontend)
+- Created `docker-compose.yml`:
+  - Orchestrates `api` and `ui` services with healthchecks (`curl -f http://localhost:8000/health`)
+  - Dependency ordering with `condition: service_healthy`
+  - Named persistent volume `codebase_data` for vector database and registry
+  - Configurable environment variables for `PORT`, `API_BASE_URL`, `LLM_PROVIDER`, `GEMINI_API_KEY`, `GITHUB_TOKEN`
+- Created `.dockerignore` excluding `.git`, `venv`, `data/`, `.pytest_cache`, `__pycache__`, and secrets
+- Created GitHub Actions CI workflow `.github/workflows/ci.yml`:
+  - Triggers on push and pull requests to `main` and `master`
+  - Python 3.12 environment with pip caching
+  - Installs CPU PyTorch and requirements
+  - Runs full offline test suite (`pytest -v`)
+  - Validates `docker compose config` and Docker image build
+- Enhanced `CHROMA_PERSIST_DIRECTORY` and `REGISTRY_PATH` environment variable overrides across storage and registry layers
+- Comprehensive unit test suite `tests/test_deployment.py` (6 unit tests, total 175 tests passing)
+- Updated documentation in `README.md` with Docker and Docker Compose instructions
 
 ### ⬜ Phase 12 — Observability, cost monitoring, docs/demo polish
 

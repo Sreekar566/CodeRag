@@ -278,7 +278,51 @@ Design options considered:
    - Choice made: Option B.
    - Why: Offline testability is a core project standard (unit tests must not need network access, API keys, or the embedding model download). Fast deterministic tests prevent CI breakage and speed up local development while keeping integration tests available under `@pytest.mark.integration`.
 
+## Phase 11: Testing, CI/CD, Containerization, Deployment — Complete
+What was built:
+- Production `Dockerfile`:
+  - Based on `python:3.12-slim` for minimal container image footprint.
+  - Security hardening: creates and runs as non-root user `appuser:appgroup` (UID/GID 1000).
+  - Explicit CPU-only PyTorch installation from PyTorch CPU wheel index (`torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu`) preventing CUDA/GPU bloat.
+  - Pinned application dependency installation from `requirements.txt`.
+  - Installed `curl` for container healthchecks and CA certificates for secure HTTPS.
+  - Exposes port 8000 (FastAPI backend) and 8501 (Streamlit frontend).
+- Container entrypoint script `docker-entrypoint.sh`:
+  - Supports first-class subcommands `api` (FastAPI via uvicorn), `ui` (Streamlit web dashboard), `eval` (benchmark evaluation CLI), `test` (pytest), and arbitrary command pass-through (`exec "$@"`).
+  - Executable permissions configured.
+- Comprehensive `.dockerignore`:
+  - Excludes `.git`, `.github`, `venv/`, `data/`, `*.sqlite3`, `__pycache__/`, `.pytest_cache/`, `.cache/`, `.coverage`, `logs/`, and secrets (`.env`, `*.key`, `*.pem`).
+- Multi-service `docker-compose.yml`:
+  - Service `api`: FastAPI backend with HTTP healthcheck (`curl -f http://localhost:8000/health`), environment variable bindings, and persistent data volume.
+  - Service `ui`: Streamlit frontend with `depends_on: api: condition: service_healthy`, connected via `API_BASE_URL=http://api:8000`.
+  - Named persistent volume `codebase_data` mapped to `/app/data` ensuring Chroma vector indices and repository registry survive container lifecycle events.
+- Continuous Integration (`.github/workflows/ci.yml`):
+  - GitHub Actions workflow triggered on push and pull requests to `main` and `master`.
+  - Sets up Python 3.12 with pip cache, installs CPU PyTorch and pinned dependencies, and runs full offline test suite (`pytest -v`).
+  - Validates `docker compose config` syntax and validates Docker image build.
+- Configurable environment variable paths:
+  - Updated `src/storage/chroma_store.py` (`DEFAULT_CHROMA_PATH = os.getenv("CHROMA_PERSIST_DIRECTORY", "./data/chroma")`) and `src/registry/registry.py` (`DEFAULT_REGISTRY_PATH = os.getenv("REGISTRY_PATH", "./data/registry.json")`) to enable seamless persistent volume mapping in containers.
+- Unit test suite: `tests/test_deployment.py` covering Dockerfile directives, non-root user enforcement, CPU PyTorch install instructions, `.dockerignore` patterns, entrypoint execution and command routing, `docker-compose.yml` service topology and healthchecks, `.github/workflows/ci.yml` schema, and environment path configuration (6 unit tests, total 175 tests passing).
+- Documentation: Updated `README.md` with complete Docker Compose, standalone Docker, and CI/CD workflow instructions.
+
+Design options considered:
+1. Multi-container architecture vs single monolithic container:
+   - Option A: Single container running both FastAPI and Streamlit together via supervisord or background bash script.
+   - Option B: Unified Docker image with flexible entrypoint script used by separate services (`api` and `ui`) in `docker-compose.yml`.
+   - Choice made: Option B.
+   - Why: Follows Docker microservice best practices (one primary concern per container, independent restarts, healthcheck visibility, separate resource scaling), while reusing a single image build so dependencies are built only once.
+2. Healthcheck strategy for service dependency:
+   - Option A: Naive delay / sleep in Streamlit container before connecting.
+   - Option B: Docker Compose healthcheck on the `api` service (`curl -f http://localhost:8000/health`) combined with `depends_on: condition: service_healthy`.
+   - Choice made: Option B.
+   - Why: Guarantees the backend API and its vector store are fully initialized and responding before Streamlit launches, eliminating startup race conditions and frontend connection errors.
+3. PyTorch wheel installation strategy:
+   - Option A: Standard PyPI index install (`pip install torch==2.13.0`), which defaults to CUDA/cuDNN binaries (~2.5+ GB).
+   - Option B: Explicit PyTorch CPU index install (`pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu`) before `requirements.txt`.
+   - Choice made: Option B.
+   - Why: Resource optimization requirement; prevents downloading gigabytes of GPU drivers into container images and CI runners, reducing image footprint by >2 GB and dramatically speeding up build and CI pipeline execution.
+
 ## Deferred to later phases
 - Caching repeated ingestion (Phase 8 API caching)
 - Async/parallel file fetching (optimization, post-MVP)
-- Post-ingestion transparency/audit log showing what was filtered and why, for user inspection (Phase 11/12)
+- Post-ingestion transparency/audit log showing what was filtered and why, for user inspection (Phase 12)

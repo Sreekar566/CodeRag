@@ -15,7 +15,7 @@ from src.registry.models import RepositoryMetadata
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REGISTRY_PATH = "./data/registry.json"
+DEFAULT_REGISTRY_PATH = os.getenv("REGISTRY_PATH", "./data/registry.json")
 
 
 def _normalize_repo_id(owner_or_id: str, repo: str | None = None) -> str:

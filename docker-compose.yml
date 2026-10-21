@@ -1,0 +1,44 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: api
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - CHROMA_PERSIST_DIRECTORY=/app/data/chroma
+      - REGISTRY_PATH=/app/data/registry.json
+    volumes:
+      - codebase_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ui
+    ports:
+      - "8501:8501"
+    environment:
+      - PORT=8501
+      - API_BASE_URL=http://api:8000
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  codebase_data:
+    name: codebase_data
