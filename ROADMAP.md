@@ -150,8 +150,23 @@ language)
 - Pinned `streamlit==1.66.0` and its dependencies in `requirements.txt`
 - Unit test suite `tests/test_ui.py` (20 tests passing in ~0.3s; total 152 tests passing)
 
-### ⬜ Phase 10 — Evaluation framework
-Retrieval accuracy, hallucination rate against benchmark Q&A pairs
+### ✅ Phase 10 — Evaluation framework (complete)
+- Created `src/evaluation/` package:
+  - `models.py`: Data models for `BenchmarkItem`, `RetrievalMetrics`, `GenerationMetrics`, `ItemEvalResult`, and `EvaluationReport` with ASCII summary tables, GitHub Flavored Markdown reports, and JSON export.
+  - `metrics.py`: Deterministic metrics computation: Hit Rate@K, Mean Reciprocal Rank (MRR), Precision@K, Recall@K, Citation Groundedness (verifying citations exist in retrieved context), Symbol/Keyword Coverage, and Abstention / Hallucination Rate on negative probes.
+  - `benchmark.py`: Curated benchmark suite for `miguelgrinberg/microblog` covering authentication, database models, password reset email, application factory, configuration, error handling, route pagination, and adversarial negative probes (`microblog-neg-stripe`, `microblog-neg-k8s`). Includes JSON loader and dataset persistence.
+  - `evaluator.py`: `CodebaseEvaluator` orchestrating automated benchmark evaluations across vector stores (Chroma, InMemory) and LLM providers (Fake, Gemini), with resilient error handling and category performance breakdowns.
+  - `main.py`: Command-line evaluation runner (`python -m src.evaluation.main`) supporting `--repo`, `--collection`, `--benchmark`, `--top-k`, `--retrieval-only`, `--llm`, `--output`, and `--markdown`.
+- Evaluated end-to-end against real indexed `miguelgrinberg/microblog` repository:
+  - Retrieval Hit Rate @ 10: 100.0%
+  - Mean Reciprocal Rank (MRR): 0.423
+  - Retrieval Recall @ 10: 85.0%
+  - Citation Groundedness: 100.0%
+  - Negative Probe Abstention Accuracy: 100.0%
+  - Hallucination Rate: 0.0%
+  - Overall Quality Score: 76.2%
+  - Average Latency: 334.1 ms
+- Comprehensive unit test suite `tests/test_evaluation.py` (17 tests passing in ~8s offline; total 169 unit tests passing) and integration test `tests/test_evaluation_integration.py`.
 
 ### ⬜ Phase 11 — Testing, CI/CD, containerization, deployment
 

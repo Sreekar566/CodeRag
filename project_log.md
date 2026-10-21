@@ -239,6 +239,45 @@ Design options considered:
    - Choice made: Option B.
    - Why: Dumping 10 retrieved code chunks directly into the message body overwhelms the chat feed and makes reading answers difficult. Collapsible accordion panels keep the conversation readable while maintaining 100% transparency and auditability for code verification.
 
+## Phase 10: Evaluation Framework — Complete
+What was built:
+- Dedicated `src/evaluation/` package for measuring retrieval accuracy, citation groundedness, and hallucination / abstention rates:
+  - `src/evaluation/models.py`: Data models `BenchmarkItem`, `RetrievalMetrics`, `GenerationMetrics`, `ItemEvalResult`, and `EvaluationReport` featuring formatted summary tables, GitHub Flavored Markdown reports, and JSON export.
+  - `src/evaluation/metrics.py`: Normalized path matching, `compute_retrieval_metrics` (Hit Rate@K, MRR, Precision@K, Recall@K), `compute_citation_metrics` (Citation precision, Citation recall, Hallucinated citations count, Citation groundedness), `compute_symbol_coverage` (codebase symbol presence), `evaluate_abstention` (hallucination resistance and abstention detection on negative probe queries), and composite overall quality scoring.
+  - `src/evaluation/benchmark.py`: Curated benchmark suite for `miguelgrinberg/microblog` across authentication, database models, password reset email, application factory, configuration, error handling, route pagination, and negative adversarial probes (`microblog-neg-stripe`, `microblog-neg-k8s`). Dataset loader & saver with JSON persistence in `src/evaluation/datasets/microblog_benchmark.json`.
+  - `src/evaluation/evaluator.py`: `CodebaseEvaluator` orchestrating automated benchmark evaluations across vector stores (Chroma, InMemory) and LLM providers (Fake, Gemini), with resilient exception handling and category performance breakdowns.
+  - `src/evaluation/main.py`: Command-line evaluation runner (`python -m src.evaluation.main`) supporting `--repo`, `--collection`, `--benchmark`, `--top-k`, `--retrieval-only`, `--llm`, `--output`, and `--markdown`.
+- Executed full evaluation run against indexed `miguelgrinberg/microblog` repository in Chroma:
+  - Total Queries: 12 (10 targeted functional queries + 2 adversarial negative probes)
+  - Retrieval Hit Rate @ 10: 100.0%
+  - Mean Reciprocal Rank (MRR): 0.423
+  - Retrieval Precision @ 10: 12.0%
+  - Retrieval Recall @ 10: 85.0%
+  - Citation Groundedness: 100.0% (0 hallucinated citations)
+  - Negative Probe Abstention Accuracy: 100.0%
+  - Hallucination Rate: 0.0%
+  - Overall Quality Score: 76.2%
+  - Mean Latency: 334.1 ms
+- Comprehensive unit test suite `tests/test_evaluation.py` (17 tests covering metric math, edge cases, model serialization, offline end-to-end evaluation, report formatting, CLI parsing; all passing in ~8s offline). Total project unit test suite: 169 tests passing.
+- Integration test suite `tests/test_evaluation_integration.py` verifying live Chroma retrieval evaluation.
+
+Design options considered:
+1. Ground truth representation for codebase evaluation:
+   - Option A: Exact textual string similarity (ROUGE / BLEU) against human reference answers.
+   - Option B: Multi-dimensional evaluation combining file retrieval accuracy (Hit Rate, MRR, Precision@K), citation grounding fidelity (citations mapped to retrieved chunks), code symbol coverage, and explicit abstention/hallucination detection.
+   - Choice made: Option B.
+   - Why: Codebase Q&A differs fundamentally from conversational chat: answers can be phrased in dozens of syntactically valid ways, rendering n-gram overlap metrics (BLEU/ROUGE) brittle and uninformative. Developers care primarily about: (1) Did retrieval find the right files? (2) Are cited file paths and line numbers real and in the context (zero hallucinated citations)? (3) Are key functions/classes named accurately? (4) Does the model decline to answer when features do not exist? Multi-dimensional metrics directly measure these engineering criteria.
+2. Negative probe / hallucination testing strategy:
+   - Option A: Only test queries where the target code exists in the repository.
+   - Option B: Include explicit out-of-scope / negative probe queries (e.g. asking for Stripe payments or Kubernetes manifests in a lightweight Flask blogging app) with automated abstention detection heuristics.
+   - Choice made: Option B.
+   - Why: Hallucination is one of the highest risks in RAG systems. If a model invents plausible-sounding files and code when asked about non-existent features, developers lose trust. Incorporating negative probes directly measures whether the system correctly reports feature absence.
+3. Offline testability vs. live evaluation:
+   - Option A: Only allow evaluation against live LLM API endpoints and real HuggingFace models.
+   - Option B: Decouple evaluation metrics and evaluation orchestrator so unit tests run deterministically with `FakeLLMProvider` and `InMemoryVectorStore`, while providing the CLI and integration tests for live runs.
+   - Choice made: Option B.
+   - Why: Offline testability is a core project standard (unit tests must not need network access, API keys, or the embedding model download). Fast deterministic tests prevent CI breakage and speed up local development while keeping integration tests available under `@pytest.mark.integration`.
+
 ## Deferred to later phases
 - Caching repeated ingestion (Phase 8 API caching)
 - Async/parallel file fetching (optimization, post-MVP)

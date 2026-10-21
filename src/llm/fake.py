@@ -65,19 +65,44 @@ class FakeLLMProvider(LLMProvider):
             matched_key = next((k for k in self.responses if k.lower() in prompt.lower()), None)
             content = self.responses[matched_key] if matched_key else "Default canned answer."
         else:
-            # Deterministic extraction of context file/lines from prompt if present
-            # Look for lines like "File: {path} (Lines {start}-{end})" or "File: {path}"
-            match = re.search(r"File:\s*([^\s\n()]+)(?:\s*\(Lines\s*(\d+)-(\d+)\))?", prompt)
-            if match:
-                path = match.group(1)
-                start = match.group(2)
-                end = match.group(3)
-                if start and end:
-                    content = f"Based on the provided codebase context, this is implemented in {path}:{start}-{end}."
-                else:
-                    content = f"Based on the provided codebase context, this is implemented in {path}."
+            prompt_lower = prompt.lower()
+            if "user question:" in prompt_lower:
+                question_part = prompt_lower.split("user question:")[1].split("please provide")[0]
+            elif "question:" in prompt_lower:
+                question_part = prompt_lower.split("question:")[1]
             else:
-                content = "Deterministic answer from FakeLLMProvider."
+                question_part = prompt_lower
+
+            if "codebase context:" in prompt_lower:
+                # Extract between context boundaries
+                ctx_split = prompt_lower.split("codebase context:")[1]
+                context_part = ctx_split.split("user question:")[0]
+            else:
+                context_part = prompt_lower
+
+            # Check if out-of-scope probe keywords exist in question but are absent in retrieved context
+            is_unanswerable = False
+            for probe in ["stripe", "payment", "kubernetes", "helm", "graphql", "celery", "kafka"]:
+                if probe in question_part and probe not in context_part:
+                    is_unanswerable = True
+                    break
+
+            if is_unanswerable:
+                content = "Based on the provided codebase context, this feature is not found and does not appear to be implemented in the repository."
+            else:
+                # Deterministic extraction of context file/lines from prompt if present
+                # Look for lines like "File: {path} (Lines {start}-{end})" or "File: {path}"
+                match = re.search(r"File:\s*([^\s\n()]+)(?:\s*\(Lines\s*(\d+)-(\d+)\))?", prompt)
+                if match:
+                    path = match.group(1)
+                    start = match.group(2)
+                    end = match.group(3)
+                    if start and end:
+                        content = f"Based on the provided codebase context, this is implemented in {path}:{start}-{end}."
+                    else:
+                        content = f"Based on the provided codebase context, this is implemented in {path}."
+                else:
+                    content = "Deterministic answer from FakeLLMProvider."
 
         prompt_tokens = len(prompt.split())
         completion_tokens = len(content.split())

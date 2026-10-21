@@ -156,6 +156,29 @@ for citation in response.citations:
 
 ---
 
+## Benchmark Evaluation Framework
+
+The platform includes an automated evaluation framework to measure retrieval accuracy (Hit Rate@K, MRR, Precision@K, Recall@K), citation grounding fidelity, and hallucination / abstention rates against benchmark questions:
+
+```bash
+# Run benchmark evaluation on miguelgrinberg/microblog
+python -m src.evaluation.main --repo miguelgrinberg/microblog
+
+# Run fast retrieval-only ranking evaluation
+python -m src.evaluation.main --repo miguelgrinberg/microblog --retrieval-only --top-k 10
+
+# Export Markdown and JSON evaluation reports
+python -m src.evaluation.main --output data/eval_report.json --markdown data/eval_report.md
+```
+
+### Metrics Tracked
+- **Hit Rate @ K:** Frequency with which target ground truth files appear in top-K retrieved chunks.
+- **Mean Reciprocal Rank (MRR):** Rank position of the first relevant chunk in search results.
+- **Citation Groundedness:** Proportion of cited file spans that actually exist within retrieved context chunks (measuring zero hallucinated citations).
+- **Abstention Accuracy & Hallucination Rate:** Evaluates how reliably the system declines to answer unanswerable or out-of-scope negative probes (e.g. asking for Stripe or Kubernetes in a Flask microblog).
+
+---
+
 ## Running Tests
 
 All unit tests run offline without network access, model downloads, or API keys:
