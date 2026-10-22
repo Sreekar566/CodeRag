@@ -54,7 +54,13 @@ class ApiClient:
                 json=json,
                 timeout=req_timeout,
             )
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+        except requests.exceptions.Timeout as exc:
+            raise ApiClientError(
+                f"Request to '{path}' timed out after {req_timeout:.0f}s. "
+                "For large repositories, enable 'Run indexing as background task' to avoid browser/HTTP timeouts.",
+                details=str(exc),
+            ) from exc
+        except requests.exceptions.ConnectionError as exc:
             raise ApiConnectionError(
                 f"Failed to connect to backend server at '{self.base_url}'. "
                 "Ensure the API server is running (e.g., 'python -m src.api.main').",
@@ -146,7 +152,7 @@ class ApiClient:
         collection_name: str | None = None,
         force: bool = False,
         background: bool = False,
-        timeout: float = 120.0,
+        timeout: float = 300.0,
     ) -> dict[str, Any]:
         """
         Trigger repository indexing (synchronous or background).

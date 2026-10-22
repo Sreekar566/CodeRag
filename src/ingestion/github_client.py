@@ -5,6 +5,15 @@ import os
 GITHUB_API_BASE = "https://api.github.com"
 
 
+def get_auth_headers(token: str | None = None) -> dict[str, str]:
+    tok = token or os.environ.get("GITHUB_TOKEN")
+    if not tok:
+        return {}
+    if tok.startswith("github_pat_"):
+        return {"Authorization": f"Bearer {tok}"}
+    return {"Authorization": f"token {tok}"}
+
+
 def get_repo_tree(owner: str, repo: str, token: str | None = None, branch: str = "main"):
     """
     Fetch the full recursive file tree for a GitHub repo.
@@ -14,7 +23,7 @@ def get_repo_tree(owner: str, repo: str, token: str | None = None, branch: str =
     """
     url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/git/trees/{branch}"
     params = {"recursive": "1"}
-    headers = {"Authorization": f"token {token}"} if token else {}
+    headers = get_auth_headers(token)
 
     response = requests.get(url, headers=headers, params=params)
 
@@ -39,7 +48,7 @@ def get_file_content(owner: str, repo: str, path: str, token: str | None = None)
     Returns the file content as a string, or None if it's binary/undecodable.
     """
     url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/contents/{path}"
-    headers = {"Authorization": f"token {token}"} if token else {}
+    headers = get_auth_headers(token)
 
     response = requests.get(url, headers=headers)
 
@@ -67,7 +76,7 @@ def get_default_branch(owner: str, repo: str, token: str | None = None) -> str:
     Returns the branch name (e.g., 'main' or 'master').
     """
     url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}"
-    headers = {"Authorization": f"token {token}"} if token else {}
+    headers = get_auth_headers(token)
 
     response = requests.get(url, headers=headers)
     if response.status_code == 404:
@@ -85,7 +94,7 @@ def get_latest_commit_sha(owner: str, repo: str, token: str | None = None, branc
     Fetch the latest commit SHA for a specific branch of a GitHub repository.
     """
     url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/commits/{branch}"
-    headers = {"Authorization": f"token {token}"} if token else {}
+    headers = get_auth_headers(token)
 
     response = requests.get(url, headers=headers)
     if response.status_code == 404:
