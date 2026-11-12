@@ -4,7 +4,7 @@ Pydantic data models for FastAPI request validation and structured response sche
 from __future__ import annotations
 
 from typing import Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, computed_field, model_validator
 
 
 # ============================================================================
@@ -158,6 +158,8 @@ class CollectionDetailResponse(BaseModel):
 
 class ChangeSetResponse(BaseModel):
     """Summary of changes detected between repository tree and indexed state."""
+    model_config = ConfigDict(extra="ignore")
+
     owner: str
     repo: str
     branch: str
@@ -169,6 +171,40 @@ class ChangeSetResponse(BaseModel):
     unchanged_files: list[str] = Field(default_factory=list)
     has_changes: bool = False
     total_files: int = 0
+
+    @model_validator(mode="before")
+    @classmethod
+    def remap_short_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for short_k, long_k in (
+                ("added", "added_files"),
+                ("modified", "modified_files"),
+                ("deleted", "deleted_files"),
+                ("unchanged", "unchanged_files"),
+            ):
+                if short_k in data and long_k not in data:
+                    data[long_k] = data[short_k]
+        return data
+
+    @computed_field
+    @property
+    def added(self) -> list[str]:
+        return self.added_files
+
+    @computed_field
+    @property
+    def modified(self) -> list[str]:
+        return self.modified_files
+
+    @computed_field
+    @property
+    def deleted(self) -> list[str]:
+        return self.deleted_files
+
+    @computed_field
+    @property
+    def unchanged(self) -> list[str]:
+        return self.unchanged_files
 
 
 class DeleteResponse(BaseModel):

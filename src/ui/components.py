@@ -120,14 +120,24 @@ def format_repo_label(repo: dict[str, Any]) -> str:
     return f"{owner}/{name} ({files} files, {chunks} chunks{sha_str})"
 
 
+def _extract_changes_list(changes: dict[str, Any], *keys: str) -> list[str]:
+    """Helper to extract a list of file paths from a changes payload with fallback keys."""
+    for key in keys:
+        val = changes.get(key)
+        if isinstance(val, list):
+            return val
+    return []
+
+
 def format_changes_summary(changes: dict[str, Any]) -> str:
     """
     Format Git tree diff counts into a concise summary badge string.
+    Supports both API ChangeSetResponse schema (added_files, etc.) and short keys (added, etc.).
     """
-    added = len(changes.get("added", []))
-    modified = len(changes.get("modified", []))
-    deleted = len(changes.get("deleted", []))
-    unchanged = len(changes.get("unchanged", []))
+    added = len(_extract_changes_list(changes, "added_files", "added"))
+    modified = len(_extract_changes_list(changes, "modified_files", "modified"))
+    deleted = len(_extract_changes_list(changes, "deleted_files", "deleted"))
+    unchanged = len(_extract_changes_list(changes, "unchanged_files", "unchanged"))
     return f"+{added} added, ~{modified} modified, -{deleted} deleted, ={unchanged} unchanged"
 
 
@@ -189,11 +199,12 @@ def render_source_chunks(sources: list[dict[str, Any]]) -> None:
 def render_changes_details(changes: dict[str, Any]) -> None:
     """
     Streamlit renderer for repository diff preview.
+    Supports both API ChangeSetResponse schema (added_files, etc.) and short keys (added, etc.).
     """
-    added = changes.get("added", [])
-    modified = changes.get("modified", [])
-    deleted = changes.get("deleted", [])
-    unchanged = changes.get("unchanged", [])
+    added = _extract_changes_list(changes, "added_files", "added")
+    modified = _extract_changes_list(changes, "modified_files", "modified")
+    deleted = _extract_changes_list(changes, "deleted_files", "deleted")
+    unchanged = _extract_changes_list(changes, "unchanged_files", "unchanged")
 
     st.markdown(f"**Summary:** {format_changes_summary(changes)}")
 

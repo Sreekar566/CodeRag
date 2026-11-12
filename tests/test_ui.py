@@ -17,6 +17,7 @@ from src.ui.components import (
     get_status_badge,
     format_repo_label,
     format_changes_summary,
+    render_changes_details,
 )
 from src.ui.main import parse_args, get_app_path
 
@@ -372,7 +373,7 @@ def test_format_repo_label():
 
 
 def test_format_changes_summary():
-    """Test format_changes_summary."""
+    """Test format_changes_summary with short keys."""
     changes = {
         "added": ["a.py", "b.py"],
         "modified": ["c.py"],
@@ -381,6 +382,101 @@ def test_format_changes_summary():
     }
     summary = format_changes_summary(changes)
     assert summary == "+2 added, ~1 modified, -0 deleted, =2 unchanged"
+
+
+def test_format_changes_summary_with_api_schema():
+    """Test format_changes_summary with FastAPI ChangeSetResponse field names."""
+    changes = {
+        "added_files": ["src/new_feature.py", "src/auth.py"],
+        "modified_files": ["src/routes.py"],
+        "deleted_files": ["src/legacy.py"],
+        "unchanged_files": ["src/main.py", "README.md", "pyproject.toml"],
+        "has_changes": True,
+        "total_files": 7,
+    }
+    summary = format_changes_summary(changes)
+    assert summary == "+2 added, ~1 modified, -1 deleted, =3 unchanged"
+
+
+def test_render_changes_details_with_both_key_formats():
+    """Test render_changes_details formats columns correctly with both key formats."""
+    # 1. API schema format
+    api_changes = {
+        "added_files": ["app/new.py"],
+        "modified_files": ["app/mod.py"],
+        "deleted_files": ["app/del.py"],
+        "unchanged_files": ["app/keep.py"],
+    }
+    with patch("src.ui.components.st") as mock_st:
+        c1, c2, c3 = MagicMock(), MagicMock(), MagicMock()
+        mock_st.columns.return_value = (c1, c2, c3)
+        render_changes_details(api_changes)
+
+        mock_st.markdown.assert_any_call("**Summary:** +1 added, ~1 modified, -1 deleted, =1 unchanged")
+        mock_st.markdown.assert_any_call("**Added (1)**")
+        mock_st.markdown.assert_any_call("- 🟢 `app/new.py`")
+        mock_st.markdown.assert_any_call("**Modified (1)**")
+        mock_st.markdown.assert_any_call("- 🟡 `app/mod.py`")
+        mock_st.markdown.assert_any_call("**Deleted (1)**")
+        mock_st.markdown.assert_any_call("- 🔴 `app/del.py`")
+        mock_st.caption.assert_called_with("Unchanged files: 1 (will not be re-embedded)")
+
+    # 2. Legacy short key format
+    short_changes = {
+        "added": ["app/new.py"],
+        "modified": ["app/mod.py"],
+        "deleted": [],
+        "unchanged": [],
+    }
+    with patch("src.ui.components.st") as mock_st:
+        c1, c2, c3 = MagicMock(), MagicMock(), MagicMock()
+        mock_st.columns.return_value = (c1, c2, c3)
+        render_changes_details(short_changes)
+
+        mock_st.markdown.assert_any_call("**Summary:** +1 added, ~1 modified, -0 deleted, =0 unchanged")
+        mock_st.markdown.assert_any_call("**Added (1)**")
+        mock_st.markdown.assert_any_call("**Modified (1)**")
+        mock_st.markdown.assert_any_call("**Deleted (0)**")
+
+
+def test_changeset_response_model_dual_keys():
+    """Verify ChangeSetResponse supports both *_files and short keys."""
+    from src.api.models import ChangeSetResponse
+
+    resp = ChangeSetResponse(
+        owner="testowner",
+        repo="testrepo",
+        branch="main",
+        added_files=["a.py"],
+        modified_files=["b.py"],
+        deleted_files=["c.py"],
+        unchanged_files=["d.py"],
+        has_changes=True,
+        total_files=4,
+    )
+
+    data = resp.model_dump()
+    assert data["added_files"] == ["a.py"]
+    assert data["added"] == ["a.py"]
+    assert data["modified_files"] == ["b.py"]
+    assert data["modified"] == ["b.py"]
+    assert data["deleted_files"] == ["c.py"]
+    assert data["deleted"] == ["c.py"]
+    assert data["unchanged_files"] == ["d.py"]
+    assert data["unchanged"] == ["d.py"]
+
+    # Remap from short keys
+    from_short = ChangeSetResponse(
+        owner="testowner",
+        repo="testrepo",
+        branch="main",
+        added=["a.py"],
+        modified=["b.py"],
+    )
+    assert from_short.added_files == ["a.py"]
+    assert from_short.added == ["a.py"]
+    assert from_short.modified_files == ["b.py"]
+    assert from_short.modified == ["b.py"]
 
 
 # ============================================================================

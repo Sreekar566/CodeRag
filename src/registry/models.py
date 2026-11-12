@@ -81,6 +81,22 @@ class ChangeSet:
     unchanged_files: list[str] = field(default_factory=list)
 
     @property
+    def added(self) -> list[str]:
+        return self.added_files
+
+    @property
+    def modified(self) -> list[str]:
+        return self.modified_files
+
+    @property
+    def deleted(self) -> list[str]:
+        return self.deleted_files
+
+    @property
+    def unchanged(self) -> list[str]:
+        return self.unchanged_files
+
+    @property
     def has_changes(self) -> bool:
         """True if any files were added, modified, or deleted."""
         return bool(self.added_files or self.modified_files or self.deleted_files)
@@ -102,6 +118,10 @@ class ChangeSet:
             "modified_files": self.modified_files,
             "deleted_files": self.deleted_files,
             "unchanged_files": self.unchanged_files,
+            "added": self.added_files,
+            "modified": self.modified_files,
+            "deleted": self.deleted_files,
+            "unchanged": self.unchanged_files,
             "has_changes": self.has_changes,
             "total_files": self.total_files,
         }
