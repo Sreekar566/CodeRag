@@ -24,6 +24,11 @@ class ApiConnectionError(ApiClientError):
     pass
 
 
+class ApiTimeoutError(ApiConnectionError):
+    """Exception raised when an API request to the backend server times out."""
+    pass
+
+
 class ApiClient:
     """
     HTTP client for the AI Codebase Intelligence backend API.
@@ -55,8 +60,9 @@ class ApiClient:
                 timeout=req_timeout,
             )
         except requests.exceptions.Timeout as exc:
-            raise ApiClientError(
-                f"Request to '{path}' timed out after {req_timeout:.0f}s. "
+            raise ApiTimeoutError(
+                f"Failed to connect to backend server at '{self.base_url}': "
+                f"request to '{path}' timed out after {req_timeout:.0f}s. "
                 "For large repositories, enable 'Run indexing as background task' to avoid browser/HTTP timeouts.",
                 details=str(exc),
             ) from exc

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.ui.client import ApiClient, ApiClientError, ApiConnectionError
+from src.ui.client import ApiClient, ApiClientError, ApiConnectionError, ApiTimeoutError
 from src.ui.components import (
     format_citation,
     format_metrics,
@@ -92,7 +92,7 @@ def test_api_client_connection_error():
 
 
 def test_api_client_timeout_error():
-    """Test request timeout raises ApiConnectionError."""
+    """Test request timeout raises ApiConnectionError / ApiTimeoutError."""
     client = ApiClient("http://fake-api:8000")
     with patch.object(
         client.session,
@@ -102,6 +102,7 @@ def test_api_client_timeout_error():
         with pytest.raises(ApiConnectionError) as exc_info:
             client.health()
         assert "Failed to connect to backend server" in str(exc_info.value)
+        assert isinstance(exc_info.value, ApiTimeoutError)
 
 
 def test_api_client_http_error_json():

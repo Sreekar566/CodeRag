@@ -113,36 +113,43 @@ def merge_overlapping_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any
     if not chunks or len(chunks) <= 1:
         return list(chunks)
 
-    # Group by file path
-    by_file: dict[str, list[dict[str, Any]]] = {}
+    # Group by repository and file path to avoid cross-repo chunk collisions
+    by_file: dict[tuple[str | None, str], list[dict[str, Any]]] = {}
     for c in chunks:
-        path = c.get("path") or c.get("metadata", {}).get("path", "unknown")
-        by_file.setdefault(path, []).append(c)
+        path = c.get("path") or (c.get("metadata", {}) or {}).get("path", "unknown")
+        repo = c.get("repo") or (c.get("metadata", {}) or {}).get("repo")
+        by_file.setdefault((repo, path), []).append(c)
 
     merged_all: list[dict[str, Any]] = []
 
-    for path, file_chunks in by_file.items():
+    for (repo, path), file_chunks in by_file.items():
         # Sort primarily by start_line, secondarily by end_line
         file_chunks.sort(key=lambda c: (
-            c.get("start_line", c.get("metadata", {}).get("start_line", 0)),
-            c.get("end_line", c.get("metadata", {}).get("end_line", 0)),
+            c.get("start_line", (c.get("metadata", {}) or {}).get("start_line", 0)),
+            c.get("end_line", (c.get("metadata", {}) or {}).get("end_line", 0)),
         ))
 
         current = file_chunks[0].copy()
         current_text = current.get("text", "")
         current_lines = current_text.splitlines()
-        current_start = current.get("start_line", current.get("metadata", {}).get("start_line", 1))
-        current_end = current.get("end_line", current.get("metadata", {}).get("end_line", 1))
+        current_start = current.get("start_line", (current.get("metadata", {}) or {}).get("start_line", 1))
+        current_end = current.get("end_line", (current.get("metadata", {}) or {}).get("end_line", 1))
 
         for nxt in file_chunks[1:]:
-            nxt_start = nxt.get("start_line", nxt.get("metadata", {}).get("start_line", 1))
-            nxt_end = nxt.get("end_line", nxt.get("metadata", {}).get("end_line", 1))
+            nxt_start = nxt.get("start_line", (nxt.get("metadata", {}) or {}).get("start_line", 1))
+            nxt_end = nxt.get("end_line", (nxt.get("metadata", {}) or {}).get("end_line", 1))
             nxt_text = nxt.get("text", "")
             nxt_lines = nxt_text.splitlines()
 
             # Check if overlapping or touching (start <= end + 1)
             if nxt_start <= current_end + 1:
-                # Overlapping or adjacent
+                # Overlapping or adjacent: preserve highest relevance score
+                c_sim = current.get("similarity", current.get("score", 0.0))
+                n_sim = nxt.get("similarity", nxt.get("score", 0.0))
+                current["similarity"] = max(c_sim, n_sim)
+                if "score" in current or "score" in nxt:
+                    current["score"] = max(current.get("score", 0.0), nxt.get("score", 0.0))
+
                 if nxt_end > current_end:
                     # Calculate line overlap
                     overlap_lines = current_end - nxt_start + 1
@@ -159,11 +166,11 @@ def merge_overlapping_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any
                     current["end_line"] = current_end
                     if "metadata" in current and isinstance(current["metadata"], dict):
                         current["metadata"]["end_line"] = current_end
-                    # Update similarity to highest among merged chunks
-                    c_sim = current.get("similarity", current.get("score", 0.0))
-                    n_sim = nxt.get("similarity", nxt.get("score", 0.0))
-                    current["similarity"] = max(c_sim, n_sim)
-                    current["id"] = f"{path}:{current_start}-{current_end}"
+
+                    if repo:
+                        current["id"] = f"{repo}:{path}:{current_start}-{current_end}"
+                    else:
+                        current["id"] = f"{path}:{current_start}-{current_end}"
             else:
                 # Gap between chunks; finalize current and start next
                 current["start_line"] = current_start

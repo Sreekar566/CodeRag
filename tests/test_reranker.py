@@ -115,6 +115,51 @@ class TestReRanker:
         merged = merge_overlapping_chunks([c1, c2])
         assert len(merged) == 2
 
+    def test_merge_chunks_multi_repo_same_relative_path(self):
+        """Ensure chunks from distinct repositories with identical paths are never merged together."""
+        c1 = {
+            "repo": "ownerA/repoA",
+            "path": "README.md",
+            "start_line": 1,
+            "end_line": 10,
+            "text": "Repo A Readme",
+            "similarity": 0.8,
+        }
+        c2 = {
+            "repo": "ownerB/repoB",
+            "path": "README.md",
+            "start_line": 1,
+            "end_line": 10,
+            "text": "Repo B Readme",
+            "similarity": 0.9,
+        }
+        merged = merge_overlapping_chunks([c1, c2])
+        assert len(merged) == 2
+        repos = {m.get("repo") for m in merged}
+        assert repos == {"ownerA/repoA", "ownerB/repoB"}
+
+    def test_merge_chunks_enclosed_chunk_updates_similarity(self):
+        """Ensure an overlapping chunk fully enclosed within an earlier chunk updates similarity."""
+        c1 = {
+            "path": "app/models.py",
+            "start_line": 1,
+            "end_line": 50,
+            "text": "\n".join(f"line {i}" for i in range(1, 51)),
+            "similarity": 0.5,
+        }
+        c2 = {
+            "path": "app/models.py",
+            "start_line": 10,
+            "end_line": 20,
+            "text": "\n".join(f"line {i}" for i in range(10, 21)),
+            "similarity": 0.95,
+        }
+        merged = merge_overlapping_chunks([c1, c2])
+        assert len(merged) == 1
+        assert merged[0]["similarity"] == 0.95
+        assert merged[0]["start_line"] == 1
+        assert merged[0]["end_line"] == 50
+
     def test_reranker_prioritizes_exact_matches_and_definitions(self):
         generic_chunk = {
             "path": "app/utils.py",

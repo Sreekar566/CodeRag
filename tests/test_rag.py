@@ -63,10 +63,11 @@ class TestPromptAndCitations:
             "Authentication logic is defined in `app/auth/routes.py:12-35`.\n"
             "The user model is in [app/models.py:L40-L50].\n"
             "Main entrypoint is `run.py:5`.\n"
+            "CI workflow is at `.github/workflows/ci.yml:10-25`.\n"
             "See https://flask.palletsprojects.com:80 for details."
         )
         citations = extract_citations_from_text(text)
-        assert len(citations) == 3
+        assert len(citations) == 4
 
         c1 = citations[0]
         assert c1.path == "app/auth/routes.py"
@@ -84,6 +85,11 @@ class TestPromptAndCitations:
         assert c3.start_line == 5
         assert c3.end_line == 5
         assert c3.format_citation() == "run.py:5"
+
+        c4 = citations[3]
+        assert c4.path == ".github/workflows/ci.yml"
+        assert c4.start_line == 10
+        assert c4.end_line == 25
 
     def test_citations_from_chunks(self):
         chunks = [

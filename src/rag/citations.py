@@ -94,7 +94,10 @@ def extract_citations_from_text(text: str) -> list[Citation]:
         if any(raw_path.lower().endswith(dom) for dom in NON_CODE_DOMAIN_SUFFIXES):
             continue
 
-        raw_path = raw_path.lstrip("./")
+        if raw_path.startswith("./"):
+            raw_path = raw_path[2:]
+        elif raw_path.startswith("/"):
+            raw_path = raw_path[1:]
 
         start_str = match.group(2)
         end_str = match.group(3)
