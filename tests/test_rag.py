@@ -316,3 +316,58 @@ class TestRAGEngine:
         assert resp.sources[0]["end_line"] == 25
         assert "line10" in resp.sources[0]["text"]
         assert "line25" in resp.sources[0]["text"]
+
+    def test_resolve_target_specs_deduplication(self):
+        engine = RAGEngine(vector_store=MagicMock(), llm_provider=FakeLLMProvider())
+        specs = engine._resolve_target_specs(repos=["repoA", "repoB", "repoA"])
+        assert len(specs) == 2
+        assert specs[0] == ("repoA", "repoA")
+        assert specs[1] == ("repoB", "repoB")
+
+    def test_retrieve_chunks_tags_single_repo(self):
+        mock_store = MagicMock()
+        mock_store.query.return_value = [
+            {"path": "file1.py", "text": "pass", "start_line": 1, "end_line": 2}
+        ]
+        engine = RAGEngine(vector_store=mock_store, llm_provider=FakeLLMProvider())
+        chunks, latency = engine._retrieve_chunks(
+            query="test",
+            target_specs=[("myorg/repo", "myorg_repo")],
+            tag_repo=True,
+        )
+        assert len(chunks) == 1
+        assert chunks[0]["repo"] == "myorg/repo"
+        assert chunks[0]["metadata"]["repo"] == "myorg/repo"
+        assert latency >= 0.0
+
+    def test_modular_pipeline_stages(self):
+        mock_store = MagicMock()
+        fake_llm = FakeLLMProvider(canned_response="Code is in `src/app.py:10-20`.")
+        engine = RAGEngine(vector_store=mock_store, llm_provider=fake_llm)
+
+        raw_chunks = [
+            {"path": "src/app.py", "start_line": 10, "end_line": 20, "text": "def run(): pass", "language": "python"}
+        ]
+        assembly_result, assembly_ms = engine._assemble_context(
+            query="how to run",
+            raw_chunks=raw_chunks,
+            budget=500,
+            rerank=True,
+            merge_overlapping=True,
+        )
+        assert len(assembly_result.chunks) == 1
+        assert assembly_ms >= 0.0
+
+        llm_resp, gen_ms = engine._generate_answer(
+            query="how to run",
+            formatted_context=assembly_result.formatted_context,
+        )
+        assert llm_resp.content == "Code is in `src/app.py:10-20`."
+        assert gen_ms >= 0.0
+
+        citations, cit_ms = engine._resolve_citations(llm_resp.content, assembly_result.chunks)
+        assert len(citations) == 1
+        assert citations[0].path == "src/app.py"
+        assert citations[0].start_line == 10
+        assert citations[0].end_line == 20
+        assert cit_ms >= 0.0

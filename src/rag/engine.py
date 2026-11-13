@@ -94,6 +94,276 @@ class RAGEngine:
             return meta.repo_id, meta.collection_name
         return repo_or_col, sanitize_collection_name(repo_or_col)
 
+    def _resolve_target_specs(
+        self,
+        repo: str | list[str] | None = None,
+        repos: list[str] | None = None,
+        collection_name: str | None = None,
+        collections: list[str] | None = None,
+    ) -> list[tuple[str, str]]:
+        """
+        Determine target repositories and collections to query.
+        Returns a deduplicated list of (repo_label, collection_name) tuples.
+        """
+        target_specs: list[tuple[str, str]] = []
+
+        if repos:
+            for r in repos:
+                target_specs.append(self._resolve_collection(r))
+        elif collections:
+            for c in collections:
+                target_specs.append((c, sanitize_collection_name(c)))
+        elif repo:
+            if isinstance(repo, list):
+                for r in repo:
+                    target_specs.append(self._resolve_collection(r))
+            else:
+                target_specs.append(self._resolve_collection(repo))
+        elif collection_name:
+            target_specs.append((collection_name, sanitize_collection_name(collection_name)))
+        else:
+            target_specs.append((self.default_collection, sanitize_collection_name(self.default_collection)))
+
+        # Deduplicate while preserving order
+        deduped: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for spec in target_specs:
+            if spec not in seen:
+                seen.add(spec)
+                deduped.append(spec)
+        return deduped
+
+    def _retrieve_chunks(
+        self,
+        query: str,
+        target_specs: list[tuple[str, str]],
+        top_k: int = 10,
+        where: dict[str, Any] | None = None,
+        tag_repo: bool = False,
+    ) -> tuple[list[dict[str, Any]], float]:
+        """
+        Query vector storage across all target collections and annotate chunks with repo metadata.
+        Returns (raw_chunks, retrieval_latency_ms).
+        """
+        timer = StageTimer().start()
+        raw_chunks: list[dict[str, Any]] = []
+
+        for repo_label, col_name in target_specs:
+            chunks = self.vector_store.query(
+                query_text=query,
+                top_k=top_k,
+                collection_name=col_name,
+                where=where,
+            )
+            for c in chunks:
+                if tag_repo:
+                    c["repo"] = repo_label
+                    if "metadata" not in c or not isinstance(c["metadata"], dict):
+                        c["metadata"] = {}
+                    c["metadata"]["repo"] = repo_label
+            raw_chunks.extend(chunks)
+
+        retrieval_ms = timer.stop()
+        return raw_chunks, retrieval_ms
+
+    def _build_empty_response(
+        self,
+        query: str,
+        target_specs: list[tuple[str, str]],
+        model_name: str,
+        retrieval_ms: float,
+        overall_timer: StageTimer,
+    ) -> RAGResponse:
+        """
+        Construct a standardized empty-context response and log telemetry when no chunks are found.
+        """
+        total_duration_ms = overall_timer.stop()
+        is_multi_repo = len(target_specs) > 1
+
+        if is_multi_repo:
+            col_display = ", ".join(t[1] for t in target_specs)
+            msg = f"No relevant code context was found in collections '{col_display}' to answer the question: '{query}'."
+            primary_col = "multi"
+        else:
+            primary_col = target_specs[0][1]
+            msg = f"No relevant code context was found in collection '{primary_col}' to answer the question: '{query}'."
+
+        stage_latencies = {
+            "retrieval": round(retrieval_ms, 2),
+            "total": round(total_duration_ms, 2),
+        }
+
+        telemetry = QueryTelemetry(
+            question=query,
+            target_repos=[t[0] for t in target_specs],
+            model=model_name,
+            stage_latencies_ms=stage_latencies,
+            total_duration_ms=total_duration_ms,
+            retrieved_count=0,
+            selected_count=0,
+            citations_count=0,
+        )
+        get_telemetry_collector().record_query(telemetry)
+
+        return RAGResponse(
+            query=query,
+            answer=msg,
+            citations=[],
+            sources=[],
+            model=model_name,
+            metadata={
+                "collection": primary_col,
+                "collections": [t[1] for t in target_specs],
+                "repositories": [t[0] for t in target_specs],
+                "retrieved_count": 0,
+                "status": "no_context",
+                "duration_ms": round(total_duration_ms, 2),
+                "elapsed_seconds": round(total_duration_ms / 1000.0, 3),
+                "stage_durations_ms": {"retrieval": round(retrieval_ms, 2)},
+                "estimated_cost_usd": 0.0,
+                "query_id": telemetry.query_id,
+            },
+        )
+
+    def _assemble_context(
+        self,
+        query: str,
+        raw_chunks: list[dict[str, Any]],
+        budget: int,
+        rerank: bool,
+        merge_overlapping: bool,
+    ) -> tuple[ContextAssemblyResult, float]:
+        """
+        Assemble retrieved chunks to fit within the token budget, applying reranking,
+        merging, and attention-based reordering.
+        Returns (assembly_result, assembly_latency_ms).
+        """
+        timer = StageTimer().start()
+        assembler = ContextAssembler(
+            max_context_tokens=budget,
+            rerank=rerank,
+            merge_overlapping=merge_overlapping,
+            reorder_lost_in_the_middle=self.reorder_context,
+        )
+        assembly_result = assembler.assemble(query, raw_chunks)
+        assembly_ms = timer.stop()
+        return assembly_result, assembly_ms
+
+    def _generate_answer(
+        self,
+        query: str,
+        formatted_context: str,
+        system_instruction: str | None = None,
+        temperature: float = 0.2,
+        **kwargs: Any,
+    ) -> tuple[Any, float]:
+        """
+        Format the prompt with code context and invoke the LLM provider.
+        Returns (llm_response, generation_latency_ms).
+        """
+        timer = StageTimer().start()
+        user_prompt = build_rag_prompt(query, formatted_context)
+        sys_prompt = system_instruction or self.system_prompt
+        llm_response = self.llm_provider.generate(
+            prompt=user_prompt,
+            system_instruction=sys_prompt,
+            temperature=temperature,
+            **kwargs,
+        )
+        generation_ms = timer.stop()
+        return llm_response, generation_ms
+
+    def _resolve_citations(
+        self,
+        answer_text: str,
+        selected_chunks: list[dict[str, Any]],
+    ) -> tuple[list[Citation], float]:
+        """
+        Extract citations from generated text, falling back to top source chunks if none found.
+        Returns (citations, citation_resolution_latency_ms).
+        """
+        timer = StageTimer().start()
+        in_text_citations = extract_citations_from_text(answer_text)
+        if in_text_citations:
+            citations = in_text_citations
+        else:
+            citations = citations_from_chunks(selected_chunks)
+        citations_ms = timer.stop()
+        return citations, citations_ms
+
+    def _record_telemetry_and_build_response(
+        self,
+        query: str,
+        target_specs: list[tuple[str, str]],
+        raw_chunks: list[dict[str, Any]],
+        assembly_result: ContextAssemblyResult,
+        llm_response: Any,
+        citations: list[Citation],
+        stage_latencies: dict[str, float],
+        total_duration_ms: float,
+        rerank: bool,
+        budget: int,
+    ) -> RAGResponse:
+        """
+        Calculate token costs, log telemetry, and package the final RAGResponse with execution metadata.
+        """
+        is_multi_repo = len(target_specs) > 1
+        estimated_cost_usd = calculate_llm_cost(
+            model_name=llm_response.model,
+            prompt_tokens=llm_response.prompt_tokens,
+            completion_tokens=llm_response.completion_tokens,
+        )
+
+        telemetry = QueryTelemetry(
+            question=query,
+            target_repos=[t[0] for t in target_specs],
+            model=llm_response.model,
+            stage_latencies_ms=stage_latencies,
+            total_duration_ms=total_duration_ms,
+            prompt_tokens=llm_response.prompt_tokens,
+            completion_tokens=llm_response.completion_tokens,
+            total_tokens=llm_response.total_tokens,
+            context_tokens=assembly_result.total_tokens,
+            cost_usd=estimated_cost_usd,
+            retrieved_count=len(raw_chunks),
+            selected_count=len(assembly_result.chunks),
+            citations_count=len(citations),
+        )
+        get_telemetry_collector().record_query(telemetry)
+
+        primary_col = target_specs[0][1] if len(target_specs) == 1 else "multi"
+
+        return RAGResponse(
+            query=query,
+            answer=llm_response.content,
+            citations=citations,
+            sources=assembly_result.chunks,
+            model=llm_response.model,
+            metadata={
+                "collection": primary_col,
+                "collections": [t[1] for t in target_specs],
+                "repositories": [t[0] for t in target_specs],
+                "multi_repo": is_multi_repo,
+                "retrieved_count": len(raw_chunks),
+                "selected_count": len(assembly_result.chunks),
+                "context_tokens": assembly_result.total_tokens,
+                "max_context_tokens": budget,
+                "truncated_chunks_count": assembly_result.truncated_count,
+                "dropped_chunks_count": assembly_result.dropped_count,
+                "reordered": assembly_result.reordered,
+                "reranked": rerank,
+                "prompt_tokens": llm_response.prompt_tokens,
+                "completion_tokens": llm_response.completion_tokens,
+                "total_tokens": llm_response.total_tokens,
+                "duration_ms": round(total_duration_ms, 2),
+                "elapsed_seconds": round(total_duration_ms / 1000.0, 3),
+                "stage_durations_ms": stage_latencies,
+                "estimated_cost_usd": estimated_cost_usd,
+                "query_id": telemetry.query_id,
+                "llm_metadata": llm_response.metadata,
+            },
+        )
+
     def answer_question(
         self,
         question: str,
@@ -128,141 +398,65 @@ class RAGEngine:
                 metadata={"status": "empty_query"},
             )
 
-        # Determine target repositories / collections
-        target_specs: list[tuple[str, str]] = []  # list of (repo_label, collection_name)
-
-        if repos:
-            for r in repos:
-                target_specs.append(self._resolve_collection(r))
-        elif collections:
-            for c in collections:
-                target_specs.append((c, sanitize_collection_name(c)))
-        elif repo:
-            if isinstance(repo, list):
-                for r in repo:
-                    target_specs.append(self._resolve_collection(r))
-            else:
-                target_specs.append(self._resolve_collection(repo))
-        elif collection_name:
-            target_specs.append((collection_name, sanitize_collection_name(collection_name)))
-        else:
-            target_specs.append((self.default_collection, sanitize_collection_name(self.default_collection)))
-
-        is_multi_repo = len(target_specs) > 1
-
         overall_timer = StageTimer().start()
 
+        # Step 0: Resolve target repositories / collections
+        target_specs = self._resolve_target_specs(
+            repo=repo,
+            repos=repos,
+            collection_name=collection_name,
+            collections=collections,
+        )
+        tag_repo = len(target_specs) > 1 or repo is not None or repos is not None
+
         # Step 1: Semantic retrieval across all targets
-        retrieval_timer = StageTimer().start()
-        raw_chunks: list[dict[str, Any]] = []
-        for repo_label, col_name in target_specs:
-            chunks = self.vector_store.query(
-                query_text=trimmed_question,
-                top_k=top_k,
-                collection_name=col_name,
-                where=where,
-            )
-            for c in chunks:
-                if is_multi_repo or repo:
-                    c["repo"] = repo_label
-                    if "metadata" not in c or not isinstance(c["metadata"], dict):
-                        c["metadata"] = {}
-                    c["metadata"]["repo"] = repo_label
-            raw_chunks.extend(chunks)
-        retrieval_ms = retrieval_timer.stop()
+        raw_chunks, retrieval_ms = self._retrieve_chunks(
+            query=trimmed_question,
+            target_specs=target_specs,
+            top_k=top_k,
+            where=where,
+            tag_repo=tag_repo,
+        )
 
         # Step 2: Handle empty retrieval
         if not raw_chunks:
-            total_duration_ms = overall_timer.stop()
-            if is_multi_repo:
-                col_display = ", ".join(t[1] for t in target_specs)
-                msg = f"No relevant code context was found in collections '{col_display}' to answer the question: '{trimmed_question}'."
-                primary_col = "multi"
-            else:
-                primary_col = target_specs[0][1]
-                msg = f"No relevant code context was found in collection '{primary_col}' to answer the question: '{trimmed_question}'."
-
-            telemetry = QueryTelemetry(
-                question=trimmed_question,
-                target_repos=[t[0] for t in target_specs],
-                model=model_name,
-                stage_latencies_ms={"retrieval": round(retrieval_ms, 2), "total": round(total_duration_ms, 2)},
-                total_duration_ms=total_duration_ms,
-                retrieved_count=0,
-                selected_count=0,
-                citations_count=0,
-            )
-            get_telemetry_collector().record_query(telemetry)
-
-            return RAGResponse(
+            return self._build_empty_response(
                 query=trimmed_question,
-                answer=msg,
-                citations=[],
-                sources=[],
-                model=model_name,
-                metadata={
-                    "collection": primary_col,
-                    "collections": [t[1] for t in target_specs],
-                    "repositories": [t[0] for t in target_specs],
-                    "retrieved_count": 0,
-                    "status": "no_context",
-                    "duration_ms": round(total_duration_ms, 2),
-                    "elapsed_seconds": round(total_duration_ms / 1000.0, 3),
-                    "stage_durations_ms": {"retrieval": round(retrieval_ms, 2)},
-                    "estimated_cost_usd": 0.0,
-                    "query_id": telemetry.query_id,
-                },
+                target_specs=target_specs,
+                model_name=model_name,
+                retrieval_ms=retrieval_ms,
+                overall_timer=overall_timer,
             )
 
         # Step 3: Context assembly within token budget & re-ranking
-        assembly_timer = StageTimer().start()
         budget = max_context_tokens if max_context_tokens is not None else self.max_context_tokens
         do_rerank = rerank if rerank is not None else self.rerank
         do_merge = merge_overlapping if merge_overlapping is not None else self.merge_overlapping
 
-        assembler = ContextAssembler(
-            max_context_tokens=budget,
+        assembly_result, assembly_ms = self._assemble_context(
+            query=trimmed_question,
+            raw_chunks=raw_chunks,
+            budget=budget,
             rerank=do_rerank,
             merge_overlapping=do_merge,
-            reorder_lost_in_the_middle=self.reorder_context,
         )
-        assembly_result = assembler.assemble(trimmed_question, raw_chunks)
-        selected_chunks = assembly_result.chunks
-        formatted_context = assembly_result.formatted_context
-        assembly_ms = assembly_timer.stop()
 
-        # Step 4: Construct prompt with code context
-        user_prompt = build_rag_prompt(trimmed_question, formatted_context)
-        sys_prompt = system_instruction or self.system_prompt
-
-        # Step 5: Generate LLM response
-        generation_timer = StageTimer().start()
-        llm_response = self.llm_provider.generate(
-            prompt=user_prompt,
-            system_instruction=sys_prompt,
+        # Step 4 & 5: Construct prompt and generate LLM response
+        llm_response, generation_ms = self._generate_answer(
+            query=trimmed_question,
+            formatted_context=assembly_result.formatted_context,
+            system_instruction=system_instruction,
             temperature=temperature,
             **kwargs,
         )
-        generation_ms = generation_timer.stop()
 
         # Step 6: Extract and reconcile citations
-        citations_timer = StageTimer().start()
-        in_text_citations = extract_citations_from_text(llm_response.content)
-        if in_text_citations:
-            citations = in_text_citations
-        else:
-            # Fallback to citations directly from top assembled chunks
-            citations = citations_from_chunks(selected_chunks)
-        citations_ms = citations_timer.stop()
+        citations, citations_ms = self._resolve_citations(
+            answer_text=llm_response.content,
+            selected_chunks=assembly_result.chunks,
+        )
 
         total_duration_ms = overall_timer.stop()
-
-        # Step 7: Cost and telemetry calculation
-        estimated_cost_usd = calculate_llm_cost(
-            model_name=llm_response.model,
-            prompt_tokens=llm_response.prompt_tokens,
-            completion_tokens=llm_response.completion_tokens,
-        )
 
         stage_latencies = {
             "retrieval": round(retrieval_ms, 2),
@@ -271,54 +465,18 @@ class RAGEngine:
             "citations": round(citations_ms, 2),
         }
 
-        telemetry = QueryTelemetry(
-            question=trimmed_question,
-            target_repos=[t[0] for t in target_specs],
-            model=llm_response.model,
-            stage_latencies_ms=stage_latencies,
-            total_duration_ms=total_duration_ms,
-            prompt_tokens=llm_response.prompt_tokens,
-            completion_tokens=llm_response.completion_tokens,
-            total_tokens=llm_response.total_tokens,
-            context_tokens=assembly_result.total_tokens,
-            cost_usd=estimated_cost_usd,
-            retrieved_count=len(raw_chunks),
-            selected_count=len(selected_chunks),
-            citations_count=len(citations),
-        )
-        get_telemetry_collector().record_query(telemetry)
-
-        primary_col = target_specs[0][1] if len(target_specs) == 1 else "multi"
-
-        return RAGResponse(
+        # Step 7: Record telemetry and assemble final response
+        return self._record_telemetry_and_build_response(
             query=trimmed_question,
-            answer=llm_response.content,
+            target_specs=target_specs,
+            raw_chunks=raw_chunks,
+            assembly_result=assembly_result,
+            llm_response=llm_response,
             citations=citations,
-            sources=selected_chunks,
-            model=llm_response.model,
-            metadata={
-                "collection": primary_col,
-                "collections": [t[1] for t in target_specs],
-                "repositories": [t[0] for t in target_specs],
-                "multi_repo": is_multi_repo,
-                "retrieved_count": len(raw_chunks),
-                "selected_count": len(selected_chunks),
-                "context_tokens": assembly_result.total_tokens,
-                "max_context_tokens": budget,
-                "truncated_chunks_count": assembly_result.truncated_count,
-                "dropped_chunks_count": assembly_result.dropped_count,
-                "reordered": assembly_result.reordered,
-                "reranked": do_rerank,
-                "prompt_tokens": llm_response.prompt_tokens,
-                "completion_tokens": llm_response.completion_tokens,
-                "total_tokens": llm_response.total_tokens,
-                "duration_ms": round(total_duration_ms, 2),
-                "elapsed_seconds": round(total_duration_ms / 1000.0, 3),
-                "stage_durations_ms": stage_latencies,
-                "estimated_cost_usd": estimated_cost_usd,
-                "query_id": telemetry.query_id,
-                "llm_metadata": llm_response.metadata,
-            },
+            stage_latencies=stage_latencies,
+            total_duration_ms=total_duration_ms,
+            rerank=do_rerank,
+            budget=budget,
         )
 
     def answer_multi_repo(
