@@ -22,12 +22,12 @@ def sanitize_collection_name(name: str) -> str:
     # Strip leading/trailing non-alphanumeric chars
     sanitized = re.sub(r"^[^a-zA-Z0-9]+", "", sanitized)
     sanitized = re.sub(r"[^a-zA-Z0-9]+$", "", sanitized)
-    if len(sanitized) < 3:
-        sanitized = f"col_{sanitized}".rstrip("_")
-        if len(sanitized) < 3:
-            sanitized = "codebase"
     if len(sanitized) > 63:
         sanitized = sanitized[:63].rstrip("_-")
+    if len(sanitized) < 3:
+        sanitized = f"col_{sanitized}".rstrip("_-")
+        if len(sanitized) < 3:
+            sanitized = "codebase"
     return sanitized
 
 

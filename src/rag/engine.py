@@ -12,7 +12,11 @@ from src.storage.base import VectorStore, sanitize_collection_name
 from src.storage.chroma_store import get_vector_store
 from src.llm.base import LLMProvider, get_llm_provider
 from src.rag.citations import Citation, extract_citations_from_text, citations_from_chunks
-from src.rag.context_assembler import ContextAssembler, DEFAULT_MAX_CONTEXT_TOKENS
+from src.rag.context_assembler import (
+    ContextAssembler,
+    ContextAssemblyResult,
+    DEFAULT_MAX_CONTEXT_TOKENS,
+)
 from src.rag.prompt import DEFAULT_SYSTEM_PROMPT, build_rag_prompt
 from src.registry.registry import RepoRegistry, get_repo_registry
 from src.observability.models import StageTimer, calculate_llm_cost, QueryTelemetry

@@ -371,3 +371,11 @@ class TestRAGEngine:
         assert citations[0].start_line == 10
         assert citations[0].end_line == 20
         assert cit_ms >= 0.0
+
+    def test_engine_type_hints_resolvable(self):
+        """Ensure all type annotations on RAGEngine methods evaluate without NameError."""
+        import typing
+        hints_assemble = typing.get_type_hints(RAGEngine._assemble_context)
+        assert "return" in hints_assemble
+        hints_telemetry = typing.get_type_hints(RAGEngine._record_telemetry_and_build_response)
+        assert "assembly_result" in hints_telemetry

@@ -182,3 +182,63 @@ class TestReRanker:
         # Target chunk should be boosted to #1 because of path matching, lexical match, and 'def login' definition match
         assert results[0]["path"] == "app/auth/routes.py"
         assert results[0]["rerank_score"] > results[1]["rerank_score"]
+
+    def test_merge_chunks_none_line_numbers(self):
+        """Ensure chunks with None start_line or end_line do not crash and are kept separate."""
+        c1 = {"path": "a.py", "text": "foo", "start_line": None, "end_line": None}
+        c2 = {"path": "a.py", "text": "bar", "start_line": None, "end_line": None}
+        merged = merge_overlapping_chunks([c1, c2])
+        assert len(merged) == 2
+        assert merged[0]["text"] == "foo"
+        assert merged[1]["text"] == "bar"
+
+    def test_merge_chunks_mixed_line_numbers(self):
+        """Ensure mixing None line numbers and valid integers sorts and handles chunks safely."""
+        c1 = {"path": "a.py", "text": "unnumbered chunk", "start_line": None, "end_line": None}
+        c2 = {"path": "a.py", "text": "line1\nline2", "start_line": 1, "end_line": 2}
+        c3 = {"path": "a.py", "text": "line2\nline3", "start_line": 2, "end_line": 3}
+        merged = merge_overlapping_chunks([c1, c2, c3])
+        # c2 and c3 should merge, c1 remains separate
+        assert len(merged) == 2
+        numbered = [m for m in merged if m.get("start_line") == 1]
+        assert len(numbered) == 1
+        assert numbered[0]["end_line"] == 3
+
+    def test_merge_chunks_string_line_numbers(self):
+        """Ensure string representations of line numbers from JSON are converted and merged cleanly."""
+        c1 = {"path": "a.py", "text": "line10\nline11", "start_line": "10", "end_line": "11"}
+        c2 = {"path": "a.py", "text": "line11\nline12", "start_line": "11", "end_line": "12"}
+        merged = merge_overlapping_chunks([c1, c2])
+        assert len(merged) == 1
+        assert merged[0]["start_line"] == 10
+        assert merged[0]["end_line"] == 12
+        assert merged[0]["text"] == "line10\nline11\nline12"
+
+    def test_merge_chunks_none_text(self):
+        """Ensure None text values are handled without raising AttributeError."""
+        c1 = {"path": "a.py", "text": None, "start_line": 1, "end_line": 10}
+        c2 = {"path": "a.py", "text": "content", "start_line": 5, "end_line": 15}
+        merged = merge_overlapping_chunks([c1, c2])
+        assert len(merged) == 1
+        assert merged[0]["start_line"] == 1
+        assert merged[0]["end_line"] == 15
+        assert "content" in merged[0]["text"]
+
+    def test_merge_chunks_none_similarity(self):
+        """Ensure None similarity scores do not cause TypeError during comparison."""
+        c1 = {"path": "a.py", "text": "l1\nl2", "start_line": 1, "end_line": 2, "similarity": None}
+        c2 = {"path": "a.py", "text": "l2\nl3", "start_line": 2, "end_line": 3, "similarity": 0.85}
+        merged = merge_overlapping_chunks([c1, c2])
+        assert len(merged) == 1
+        assert merged[0]["similarity"] == 0.85
+
+    def test_merge_chunks_metadata_isolation(self):
+        """Ensure merging does not mutate the original chunk's metadata dict."""
+        meta1 = {"path": "a.py", "start_line": 1, "end_line": 2}
+        meta2 = {"path": "a.py", "start_line": 2, "end_line": 3}
+        c1 = {"path": "a.py", "text": "l1\nl2", "start_line": 1, "end_line": 2, "metadata": meta1}
+        c2 = {"path": "a.py", "text": "l2\nl3", "start_line": 2, "end_line": 3, "metadata": meta2}
+        merged = merge_overlapping_chunks([c1, c2])
+        assert len(merged) == 1
+        assert meta1["end_line"] == 2
+        assert merged[0]["metadata"]["end_line"] == 3

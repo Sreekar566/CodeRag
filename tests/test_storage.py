@@ -17,6 +17,11 @@ def test_sanitize_collection_name():
     sanitized = sanitize_collection_name(long_name)
     assert len(sanitized) <= 63
     assert sanitized == "a" * 63
+    # Name where 63-char truncation followed by stripping leaves < 3 chars
+    edge_long = "ab" + "_" * 65 + "c"
+    edge_sanitized = sanitize_collection_name(edge_long)
+    assert 3 <= len(edge_sanitized) <= 63
+    assert edge_sanitized.isalnum() or edge_sanitized.replace("_", "").isalnum()
 
 
 def test_chroma_store_basic_operations():

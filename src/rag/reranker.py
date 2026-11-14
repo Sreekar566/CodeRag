@@ -105,50 +105,96 @@ def compute_definition_score(text: str, keywords: list[str]) -> float:
     return 0.0
 
 
+def _extract_line_int(chunk: dict[str, Any], key: str) -> int | None:
+    val = chunk.get(key)
+    if val is None and isinstance(chunk.get("metadata"), dict):
+        val = chunk["metadata"].get(key)
+    if val is not None:
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def _extract_score(chunk: dict[str, Any], key: str, default: float = 0.0) -> float:
+    val = chunk.get(key)
+    if val is not None:
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            pass
+    return default
+
+
 def merge_overlapping_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Merge contiguous or overlapping chunks from the exact same file.
     Preserves line order and updates start_line, end_line, and combined text.
+    Safely handles missing or None line numbers, None texts, and None similarity scores.
     """
     if not chunks or len(chunks) <= 1:
-        return list(chunks)
+        return [c.copy() for c in chunks] if chunks else []
 
     # Group by repository and file path to avoid cross-repo chunk collisions
     by_file: dict[tuple[str | None, str], list[dict[str, Any]]] = {}
     for c in chunks:
-        path = c.get("path") or (c.get("metadata", {}) or {}).get("path", "unknown")
+        path = c.get("path") or (c.get("metadata", {}) or {}).get("path") or "unknown"
         repo = c.get("repo") or (c.get("metadata", {}) or {}).get("repo")
         by_file.setdefault((repo, path), []).append(c)
 
     merged_all: list[dict[str, Any]] = []
 
     for (repo, path), file_chunks in by_file.items():
-        # Sort primarily by start_line, secondarily by end_line
+        # Sort primarily by start_line, secondarily by end_line.
+        # Chunks with None start_line are placed first (-1) without raising TypeError.
         file_chunks.sort(key=lambda c: (
-            c.get("start_line", (c.get("metadata", {}) or {}).get("start_line", 0)),
-            c.get("end_line", (c.get("metadata", {}) or {}).get("end_line", 0)),
+            _extract_line_int(c, "start_line") if _extract_line_int(c, "start_line") is not None else -1,
+            _extract_line_int(c, "end_line") if _extract_line_int(c, "end_line") is not None else -1,
         ))
 
         current = file_chunks[0].copy()
-        current_text = current.get("text", "")
+        if isinstance(current.get("metadata"), dict):
+            current["metadata"] = current["metadata"].copy()
+        current_text = current.get("text") or ""
         current_lines = current_text.splitlines()
-        current_start = current.get("start_line", (current.get("metadata", {}) or {}).get("start_line", 1))
-        current_end = current.get("end_line", (current.get("metadata", {}) or {}).get("end_line", 1))
+        current_start = _extract_line_int(current, "start_line")
+        current_end = _extract_line_int(current, "end_line")
 
         for nxt in file_chunks[1:]:
-            nxt_start = nxt.get("start_line", (nxt.get("metadata", {}) or {}).get("start_line", 1))
-            nxt_end = nxt.get("end_line", (nxt.get("metadata", {}) or {}).get("end_line", 1))
-            nxt_text = nxt.get("text", "")
+            nxt_start = _extract_line_int(nxt, "start_line")
+            nxt_end = _extract_line_int(nxt, "end_line")
+            nxt_text = nxt.get("text") or ""
             nxt_lines = nxt_text.splitlines()
+
+            # If either chunk lacks valid line numbers, we cannot safely merge by line overlap
+            if current_start is None or current_end is None or nxt_start is None or nxt_end is None:
+                if current_start is not None:
+                    current["start_line"] = current_start
+                if current_end is not None:
+                    current["end_line"] = current_end
+                current["text"] = "\n".join(current_lines) if current_lines else current_text
+                merged_all.append(current)
+
+                current = nxt.copy()
+                if isinstance(current.get("metadata"), dict):
+                    current["metadata"] = current["metadata"].copy()
+                current_text = nxt_text
+                current_lines = nxt_lines
+                current_start = nxt_start
+                current_end = nxt_end
+                continue
 
             # Check if overlapping or touching (start <= end + 1)
             if nxt_start <= current_end + 1:
                 # Overlapping or adjacent: preserve highest relevance score
-                c_sim = current.get("similarity", current.get("score", 0.0))
-                n_sim = nxt.get("similarity", nxt.get("score", 0.0))
+                c_sim = _extract_score(current, "similarity", _extract_score(current, "score", 0.0))
+                n_sim = _extract_score(nxt, "similarity", _extract_score(nxt, "score", 0.0))
                 current["similarity"] = max(c_sim, n_sim)
                 if "score" in current or "score" in nxt:
-                    current["score"] = max(current.get("score", 0.0), nxt.get("score", 0.0))
+                    c_sc = _extract_score(current, "score", 0.0)
+                    n_sc = _extract_score(nxt, "score", 0.0)
+                    current["score"] = max(c_sc, n_sc)
 
                 if nxt_end > current_end:
                     # Calculate line overlap
@@ -175,18 +221,22 @@ def merge_overlapping_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any
                 # Gap between chunks; finalize current and start next
                 current["start_line"] = current_start
                 current["end_line"] = current_end
-                current["text"] = "\n".join(current_lines)
+                current["text"] = "\n".join(current_lines) if current_lines else current_text
                 merged_all.append(current)
 
                 current = nxt.copy()
-                current_text = current.get("text", "")
-                current_lines = current_text.splitlines()
+                if isinstance(current.get("metadata"), dict):
+                    current["metadata"] = current["metadata"].copy()
+                current_text = nxt_text
+                current_lines = nxt_lines
                 current_start = nxt_start
                 current_end = nxt_end
 
-        current["start_line"] = current_start
-        current["end_line"] = current_end
-        current["text"] = "\n".join(current_lines)
+        if current_start is not None:
+            current["start_line"] = current_start
+        if current_end is not None:
+            current["end_line"] = current_end
+        current["text"] = "\n".join(current_lines) if current_lines else current_text
         merged_all.append(current)
 
     return merged_all
