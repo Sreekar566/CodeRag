@@ -114,6 +114,9 @@ def test_docker_compose_valid_yaml_and_service_topology() -> None:
     assert "depends_on" in ui
     assert "api" in ui["depends_on"]
     assert ui["depends_on"]["api"].get("condition") == "service_healthy"
+    assert "healthcheck" in ui, "Service 'ui' must define a healthcheck"
+    assert "curl" in " ".join(ui["healthcheck"].get("test", []))
+    assert "_stcore/health" in " ".join(ui["healthcheck"].get("test", []))
 
     ui_env = ui.get("environment", [])
     assert any("API_BASE_URL=http://api:8000" in str(e) for e in ui_env)
@@ -121,6 +124,28 @@ def test_docker_compose_valid_yaml_and_service_topology() -> None:
     # Verify volume definition
     assert "volumes" in compose_data
     assert "codebase_data" in compose_data["volumes"]
+
+
+def test_docker_compose_healthcheck_configurations() -> None:
+    compose_path = REPO_ROOT / "docker-compose.yml"
+    with open(compose_path, "r", encoding="utf-8") as f:
+        compose_data = yaml.safe_load(f)
+
+    services = compose_data.get("services", {})
+    assert "api" in services and "ui" in services
+
+    for svc_name in ("api", "ui"):
+        svc = services[svc_name]
+        assert "healthcheck" in svc, f"{svc_name} must have a healthcheck configured"
+        hc = svc["healthcheck"]
+        assert "test" in hc
+        assert hc.get("interval") == "15s"
+        assert hc.get("timeout") == "5s"
+        assert hc.get("retries") == 3
+        assert hc.get("start_period") == "10s"
+
+    assert "http://localhost:8000/health" in " ".join(services["api"]["healthcheck"]["test"])
+    assert "http://localhost:8501/_stcore/health" in " ".join(services["ui"]["healthcheck"]["test"])
 
 
 def test_ci_workflow_valid_yaml_and_test_execution() -> None:
