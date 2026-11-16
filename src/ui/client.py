@@ -12,11 +12,18 @@ import requests
 class ApiClientError(Exception):
     """Base exception for API client errors."""
 
-    def __init__(self, message: str, status_code: int | None = None, details: Any = None):
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        details: Any = None,
+        request_id: str | None = None,
+    ):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
         self.details = details
+        self.request_id = request_id
 
 
 class ApiConnectionError(ApiClientError):
@@ -39,6 +46,7 @@ class ApiClient:
         self.base_url = url.rstrip("/")
         self.timeout = timeout
         self.session = requests.Session()
+        self.last_request_id: str | None = None
 
     def _request(
         self,
@@ -75,6 +83,13 @@ class ApiClient:
         except requests.exceptions.RequestException as exc:
             raise ApiClientError(f"HTTP request error: {exc}", details=str(exc)) from exc
 
+        # Extract request correlation ID from response headers if present
+        resp_headers = getattr(resp, "headers", {}) or {}
+        if hasattr(resp_headers, "get"):
+            raw_req_id = resp_headers.get("X-Request-ID")
+            if isinstance(raw_req_id, str):
+                self.last_request_id = raw_req_id
+
         if resp.status_code >= 400:
             error_message = f"API returned status {resp.status_code}"
             details = None
@@ -83,10 +98,17 @@ class ApiClient:
                 if isinstance(data, dict):
                     error_message = data.get("detail") or data.get("error") or error_message
                     details = data
+                    if "request_id" in data and not self.last_request_id:
+                        self.last_request_id = str(data["request_id"])
             except Exception:
                 error_message = resp.text or error_message
 
-            raise ApiClientError(error_message, status_code=resp.status_code, details=details)
+            raise ApiClientError(
+                error_message,
+                status_code=resp.status_code,
+                details=details,
+                request_id=self.last_request_id,
+            )
 
         if resp.status_code == 204:
             return {}

@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from src.api.middleware import RequestTracingMiddleware
 from src.api.routes import (
     health_router,
     repos_router,
@@ -17,6 +18,7 @@ from src.api.routes import (
     collections_router,
     observability_router,
 )
+from src.observability.logging import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,9 @@ def create_app() -> FastAPI:
     """
     Construct and configure the FastAPI application instance.
     """
+    # Configure unified application logging
+    setup_logging()
+
     app = FastAPI(
         title="AI Codebase Intelligence API",
         description=(
@@ -37,13 +42,17 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
 
-    # Enable CORS for frontend clients (Streamlit, React, etc.)
+    # Request correlation, access logging, and process timing middleware (inner)
+    app.add_middleware(RequestTracingMiddleware)
+
+    # Enable CORS for frontend clients (Streamlit, React, etc.) (outer)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Request-ID", "X-Process-Time"],
     )
 
     # Register API routers

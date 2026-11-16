@@ -2,6 +2,7 @@
 Backend API Layer for AI Codebase Intelligence Platform.
 """
 from src.api.app import app, create_app
+from src.api.middleware import RequestTracingMiddleware
 from src.api.models import (
     IndexRequest,
     IndexResponse,
@@ -17,6 +18,7 @@ from src.api.models import (
 __all__ = [
     "app",
     "create_app",
+    "RequestTracingMiddleware",
     "IndexRequest",
     "IndexResponse",
     "QueryRequest",

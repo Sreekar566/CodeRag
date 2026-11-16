@@ -18,6 +18,16 @@ from src.observability.collector import (
     TelemetryCollector,
     get_telemetry_collector,
 )
+from src.observability.logging import (
+    DEFAULT_DATE_FORMAT,
+    DEFAULT_LOG_FORMAT,
+    JsonLogFormatter,
+    RequestIdFilter,
+    get_current_request_id,
+    reset_current_request_id,
+    set_current_request_id,
+    setup_logging,
+)
 
 __all__ = [
     "StageTimer",
@@ -29,4 +39,12 @@ __all__ = [
     "MetricsSummary",
     "TelemetryCollector",
     "get_telemetry_collector",
+    "DEFAULT_DATE_FORMAT",
+    "DEFAULT_LOG_FORMAT",
+    "JsonLogFormatter",
+    "RequestIdFilter",
+    "get_current_request_id",
+    "set_current_request_id",
+    "reset_current_request_id",
+    "setup_logging",
 ]

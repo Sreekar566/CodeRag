@@ -8,6 +8,8 @@ services:
       - "8000:8000"
     environment:
       - PORT=8000
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=${LOG_FORMAT:-text}
       - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
