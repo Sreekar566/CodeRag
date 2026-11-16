@@ -8,6 +8,8 @@ import os
 from typing import Any
 import streamlit as st
 
+from src.config import get_settings
+
 from src.ui.client import ApiClient, ApiClientError, ApiConnectionError
 from src.ui.components import (
     format_citation,
@@ -69,8 +71,10 @@ st.markdown(
 # ============================================================================
 
 def init_session_state() -> None:
+    settings = get_settings()
+
     if "api_base_url" not in st.session_state:
-        st.session_state.api_base_url = os.getenv("API_BASE_URL", "http://localhost:8000")
+        st.session_state.api_base_url = settings.api_base_url
 
     if "client" not in st.session_state or st.session_state.client.base_url != st.session_state.api_base_url.rstrip("/"):
         st.session_state.client = ApiClient(base_url=st.session_state.api_base_url)
@@ -79,7 +83,7 @@ def init_session_state() -> None:
         st.session_state.messages = []
 
     if "github_token" not in st.session_state:
-        st.session_state.github_token = os.getenv("GITHUB_TOKEN", "")
+        st.session_state.github_token = settings.github_token or ""
 
     if "pending_prompt" not in st.session_state:
         st.session_state.pending_prompt = None

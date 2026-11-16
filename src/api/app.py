@@ -18,6 +18,7 @@ from src.api.routes import (
     collections_router,
     observability_router,
 )
+from src.config import get_settings
 from src.observability.logging import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -27,16 +28,18 @@ def create_app() -> FastAPI:
     """
     Construct and configure the FastAPI application instance.
     """
+    settings = get_settings()
+
     # Configure unified application logging
     setup_logging()
 
     app = FastAPI(
-        title="AI Codebase Intelligence API",
+        title=settings.app_name,
         description=(
             "REST API for repository ingestion, incremental re-indexing, "
             "semantic retrieval, and citation-grounded RAG codebase Q&A."
         ),
-        version="0.1.0",
+        version=settings.app_version,
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",

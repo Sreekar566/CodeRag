@@ -11,11 +11,12 @@ import tempfile
 import threading
 from typing import Any
 
+from src.config import get_settings
 from src.registry.models import RepositoryMetadata
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REGISTRY_PATH = os.getenv("REGISTRY_PATH", "./data/registry.json")
+DEFAULT_REGISTRY_PATH = get_settings().registry_path
 
 
 def _normalize_repo_id(owner_or_id: str, repo: str | None = None) -> str:

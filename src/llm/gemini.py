@@ -9,9 +9,10 @@ from typing import Any
 from google import genai
 from google.genai import types
 
+from src.config import get_settings
 from src.llm.base import LLMProvider, LLMResponse
 
-DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+DEFAULT_GEMINI_MODEL = get_settings().gemini_model
 
 
 class GeminiLLMProvider(LLMProvider):
@@ -25,13 +26,14 @@ class GeminiLLMProvider(LLMProvider):
         model: str | None = None,
         client: Any = None,
     ):
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        settings = get_settings()
+        self.api_key = api_key or settings.gemini_api_key
         if not self.api_key and client is None:
             raise ValueError(
                 "GEMINI_API_KEY environment variable or api_key parameter is required "
                 "for GeminiLLMProvider."
             )
-        self.model = model or os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+        self.model = model or settings.gemini_model
         self._client = client
 
     @property

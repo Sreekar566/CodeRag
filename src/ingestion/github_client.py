@@ -1,12 +1,17 @@
-import requests
+from __future__ import annotations
+
 import base64
 import os
+from typing import Any
+import requests
 
-GITHUB_API_BASE = "https://api.github.com"
+from src.config import get_settings
+
+GITHUB_API_BASE = get_settings().github_api_base
 
 
 def get_auth_headers(token: str | None = None) -> dict[str, str]:
-    tok = token or os.environ.get("GITHUB_TOKEN")
+    tok = token or get_settings().github_token
     if not tok:
         return {}
     if tok.startswith("github_pat_"):
@@ -14,7 +19,12 @@ def get_auth_headers(token: str | None = None) -> dict[str, str]:
     return {"Authorization": f"token {tok}"}
 
 
-def get_repo_tree(owner: str, repo: str, token: str | None = None, branch: str = "main"):
+def get_repo_tree(
+    owner: str,
+    repo: str,
+    token: str | None = None,
+    branch: str = "main",
+) -> list[dict[str, Any]]:
     """
     Fetch the full recursive file tree for a GitHub repo.
 
@@ -41,7 +51,12 @@ def get_repo_tree(owner: str, repo: str, token: str | None = None, branch: str =
 
 
 
-def get_file_content(owner: str, repo: str, path: str, token: str | None = None):
+def get_file_content(
+    owner: str,
+    repo: str,
+    path: str,
+    token: str | None = None,
+) -> str | None:
     """
     Fetch and decode the raw text content of a single file in a repo.
 

@@ -8,6 +8,8 @@ import os
 from typing import Any
 import requests
 
+from src.config import get_settings
+
 
 class ApiClientError(Exception):
     """Base exception for API client errors."""
@@ -42,7 +44,7 @@ class ApiClient:
     """
 
     def __init__(self, base_url: str | None = None, timeout: float = 30.0):
-        url = base_url or os.getenv("API_BASE_URL") or "http://localhost:8000"
+        url = base_url or get_settings().api_base_url
         self.base_url = url.rstrip("/")
         self.timeout = timeout
         self.session = requests.Session()

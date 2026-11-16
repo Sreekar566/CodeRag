@@ -14,6 +14,7 @@ from src.registry.incremental import IncrementalIndexer
 from src.llm.base import LLMProvider, get_llm_provider
 from src.rag.engine import RAGEngine
 from src.observability.collector import TelemetryCollector, get_telemetry_collector
+from src.config import Settings, get_settings
 
 # Module-level singletons (lazily initialized)
 _GLOBAL_REGISTRY: RepoRegistry | None = None

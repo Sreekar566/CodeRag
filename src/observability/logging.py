@@ -13,6 +13,8 @@ import os
 import sys
 from typing import Any
 
+from src.config import get_settings
+
 DEFAULT_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(request_id)s%(name)s: %(message)s"
 DEFAULT_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -91,10 +93,11 @@ def setup_logging(
     if _LOGGING_CONFIGURED and not force:
         return
 
+    settings = get_settings()
+
     # Determine log level
     if level is None:
-        level_str = os.getenv("LOG_LEVEL", "INFO").upper().strip()
-        resolved_level = getattr(logging, level_str, logging.INFO)
+        resolved_level = getattr(logging, settings.log_level, logging.INFO)
     elif isinstance(level, str):
         resolved_level = getattr(logging, level.upper().strip(), logging.INFO)
     else:
@@ -102,7 +105,7 @@ def setup_logging(
 
     # Determine format style
     if log_format is None:
-        format_style = os.getenv("LOG_FORMAT", "text").lower().strip()
+        format_style = settings.log_format
     else:
         format_style = log_format.lower().strip()
 

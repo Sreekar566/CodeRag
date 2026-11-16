@@ -6,8 +6,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 
-from src.api.dependencies import get_registry, get_storage, get_llm
+from src.api.dependencies import get_registry, get_storage, get_llm, get_settings
 from src.api.models import HealthResponse
+from src.config import Settings
 from src.registry.registry import RepoRegistry
 from src.storage.base import VectorStore
 from src.llm.base import LLMProvider
@@ -20,6 +21,7 @@ def health_check(
     registry: RepoRegistry = Depends(get_registry),
     storage: VectorStore = Depends(get_storage),
     llm: LLMProvider = Depends(get_llm),
+    settings: Settings = Depends(get_settings),
 ) -> HealthResponse:
     """
     Returns system status, configured vector store, active LLM provider,
@@ -31,7 +33,7 @@ def health_check(
 
     return HealthResponse(
         status="ok",
-        version="0.1.0",
+        version=settings.app_version,
         timestamp=datetime.now(timezone.utc).isoformat(),
         vector_store_type=storage.__class__.__name__,
         llm_provider=llm.__class__.__name__,

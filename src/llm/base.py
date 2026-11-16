@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.config import get_settings
+
 
 @dataclass
 class LLMResponse:
@@ -60,14 +62,11 @@ def get_llm_provider(
     Factory helper to instantiate an LLM provider.
     Selects provider based on:
     1. Explicit provider parameter
-    2. LLM_PROVIDER environment variable
+    2. LLM_PROVIDER environment variable / settings
     3. Defaults to 'gemini' if GEMINI_API_KEY is present, else 'fake'
     """
     if provider is None:
-        provider = os.getenv("LLM_PROVIDER")
-
-    if not provider:
-        provider = "gemini" if os.getenv("GEMINI_API_KEY") else "fake"
+        provider = get_settings().effective_llm_provider
 
     provider_normalized = provider.strip().lower()
 

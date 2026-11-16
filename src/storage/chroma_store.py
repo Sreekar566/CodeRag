@@ -9,11 +9,12 @@ from typing import Any, Callable
 
 import chromadb
 
+from src.config import get_settings
 from src.storage.base import VectorStore, sanitize_collection_name
 
-DEFAULT_CHROMA_PATH = os.getenv("CHROMA_PERSIST_DIRECTORY", "./data/chroma")
-DEFAULT_COLLECTION_NAME = "codebase"
-BATCH_SIZE = 500
+DEFAULT_CHROMA_PATH = get_settings().chroma_persist_directory
+DEFAULT_COLLECTION_NAME = get_settings().default_collection_name
+BATCH_SIZE = get_settings().storage_batch_size
 
 
 class ChromaVectorStore(VectorStore):
