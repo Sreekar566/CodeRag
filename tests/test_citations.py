@@ -414,3 +414,77 @@ class TestCitationsFromChunks:
         assert len(citations) == 1
         assert citations[0].repo is None
         assert "main.py" in citations[0].path
+
+    def test_extract_root_extensionless_code_files(self):
+        text = (
+            "Container setup is in Dockerfile:1-20, build pipeline in Makefile:10-35, "
+            "and web process defined in Procfile:1-5."
+        )
+        citations = extract_citations_from_text(text)
+        assert len(citations) == 3
+        paths = [c.path for c in citations]
+        assert "Dockerfile" in paths
+        assert "Makefile" in paths
+        assert "Procfile" in paths
+
+        docker_cit = next(c for c in citations if c.path == "Dockerfile")
+        assert docker_cit.start_line == 1
+        assert docker_cit.end_line == 20
+        assert docker_cit.repo is None
+
+    def test_extract_root_extensionless_with_repo_prefix(self):
+        text = "Frontend container in myorg/frontend:Dockerfile:1-15, backend in myorg/backend:Makefile:1-30."
+        citations = extract_citations_from_text(text)
+        assert len(citations) == 2
+        assert citations[0].repo == "myorg/frontend"
+        assert citations[0].path == "Dockerfile"
+        assert citations[0].start_line == 1
+        assert citations[0].end_line == 15
+        assert citations[0].format_citation() == "myorg/frontend:Dockerfile:1-15"
+
+        assert citations[1].repo == "myorg/backend"
+        assert citations[1].path == "Makefile"
+        assert citations[1].start_line == 1
+        assert citations[1].end_line == 30
+        assert citations[1].format_citation() == "myorg/backend:Makefile:1-30"
+
+    def test_extract_delimited_custom_extensionless(self):
+        text = "Run build via `build:1-10` and entrypoint at [entrypoint:5-20]."
+        citations = extract_citations_from_text(text)
+        assert len(citations) == 2
+        assert citations[0].path == "build"
+        assert citations[0].start_line == 1
+        assert citations[0].end_line == 10
+        assert citations[1].path == "entrypoint"
+        assert citations[1].start_line == 5
+        assert citations[1].end_line == 20
+
+    def test_extract_rejects_plain_english_standalone_words(self):
+        text = (
+            "As mentioned in Chapter:1-10 and Step:1-5, follow Table:2-4. "
+            "However, check `Dockerfile:1-10` for real code."
+        )
+        citations = extract_citations_from_text(text)
+        assert len(citations) == 1
+        assert citations[0].path == "Dockerfile"
+
+    def test_citations_from_chunks_safe_line_parsing(self):
+        chunks = [
+            {"path": "Dockerfile", "start_line": "L10", "end_line": "L25", "text": "FROM python"},
+            {"path": "Makefile", "start_line": "invalid", "end_line": "bad", "text": "all: test"},
+            {"path": "run.py", "start_line": 15, "end_line": 5, "text": "print(1)"},
+        ]
+        citations = citations_from_chunks(chunks)
+        assert len(citations) == 3
+        # L10-L25 parsed to int 10-25
+        assert citations[0].path == "Dockerfile"
+        assert citations[0].start_line == 10
+        assert citations[0].end_line == 25
+        # invalid line strings handled gracefully
+        assert citations[1].path == "Makefile"
+        assert citations[1].start_line is None
+        assert citations[1].end_line is None
+        # inverted lines swapped
+        assert citations[2].path == "run.py"
+        assert citations[2].start_line == 5
+        assert citations[2].end_line == 15

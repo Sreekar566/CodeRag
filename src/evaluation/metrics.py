@@ -147,9 +147,16 @@ def compute_citation_metrics(
         elif isinstance(c, str):
             clean_str = c.strip("`[]() \t\n\r\"'")
             parts = clean_str.split(":")
-            if len(parts) >= 3:
-                # [repo:]path:start-end
-                path_part = parts[1]
+            if len(parts) >= 4 and len(parts[1]) == 1 and parts[1].isalpha():
+                # [repo:]C:/path:start-end
+                path_part = f"{parts[1]}:{parts[2]}"
+            elif len(parts) >= 3:
+                if len(parts[0]) == 1 and parts[0].isalpha():
+                    # C:/path:start-end
+                    path_part = f"{parts[0]}:{parts[1]}"
+                else:
+                    # [repo:]path:start-end
+                    path_part = parts[1]
             elif len(parts) == 2:
                 # Could be path:line or repo:path
                 if re.match(r"^L?\d+(?:-L?\d+)?$", parts[1].strip()):

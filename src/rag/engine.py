@@ -303,9 +303,9 @@ class RAGEngine:
                         norm_chunk_path = str(chunk_path).strip().replace("\\", "/").lstrip("./").lstrip("/")
 
                         path_matches = (
-                            norm_cit_path == norm_chunk_path
-                            or norm_cit_path.endswith("/" + norm_chunk_path)
-                            or norm_chunk_path.endswith("/" + norm_cit_path)
+                            norm_cit_path.lower() == norm_chunk_path.lower()
+                            or norm_cit_path.lower().endswith("/" + norm_chunk_path.lower())
+                            or norm_chunk_path.lower().endswith("/" + norm_cit_path.lower())
                         )
                         if path_matches:
                             if cit.repo and chunk_repo and cit.repo != chunk_repo:

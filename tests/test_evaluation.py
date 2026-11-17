@@ -169,6 +169,26 @@ def test_citation_metrics_with_repo_prefixed_strings():
     assert groundedness == 1.0
 
 
+def test_citation_metrics_with_root_extensionless_files():
+    citations = [
+        "Dockerfile:1-20",
+        "`Makefile:10-35`",
+        "myorg/infra:Procfile:1-5",
+    ]
+    sources = [
+        {"path": "Dockerfile", "start_line": 1, "end_line": 50},
+        {"path": "Makefile", "start_line": 1, "end_line": 50},
+        {"path": "Procfile", "start_line": 1, "end_line": 10, "repo": "myorg/infra"},
+    ]
+    expected = ["Dockerfile", "Makefile", "Procfile"]
+
+    prec, rec, hall, groundedness = compute_citation_metrics(citations, sources, expected)
+    assert prec == 1.0
+    assert rec == 1.0
+    assert hall == []
+    assert groundedness == 1.0
+
+
 def test_symbol_coverage():
     answer = "The User class defines set_password and check_password methods along with avatar."
     expected = ["User", "set_password", "check_password", "non_existent_method"]

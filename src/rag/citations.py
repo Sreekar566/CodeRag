@@ -57,19 +57,43 @@ class Citation:
 # - [models.py:L15-L30]
 # - myorg/repo:app/auth/routes.py:10-25
 # - `backend:app/routes.py:1-20`
+# - Dockerfile:1-10
+# - `Makefile:10-25`
 CITATION_REGEX = re.compile(
     r"(?:`|\[)?"
     r"(?:([a-zA-Z0-9_.\-]+(?:/[a-zA-Z0-9_.\-]+)?):)?"
-    r"([a-zA-Z0-9_./\-]+\.[a-zA-Z0-9_]+|[A-Za-z0-9_\-]+(?:/[A-Za-z0-9_\-]+)+)"
+    r"([a-zA-Z0-9_./\-]+\.[a-zA-Z0-9_]+|[A-Za-z0-9_\-]+(?:/[A-Za-z0-9_\-]+)*)"
     r":(?:L)?(\d+)(?:-(?:L)?(\d+))?"
     r"(?:`|\])?",
     re.IGNORECASE,
 )
 
+# Known extensionless filenames common in software repositories
+KNOWN_ROOT_CODE_FILENAMES = {
+    "dockerfile", "makefile", "procfile", "vagrantfile", "jenkinsfile",
+    "containerfile", "gemfile", "rakefile", "brewfile", "justfile",
+    "earthfile", "tiltfile", "doxyfile", "license", "readme",
+    "changelog", "authors", "notice", "workspace",
+}
+
+KNOWN_ROOT_CODE_PREFIXES = (
+    "dockerfile", "makefile", "containerfile", "procfile", "jenkinsfile",
+)
 
 NON_CODE_DOMAIN_SUFFIXES = (
     ".com", ".org", ".net", ".edu", ".gov", ".io", ".co", ".info", ".biz"
 )
+
+
+def _safe_line_number(val: Any) -> int | None:
+    """Safely parse line number from string/int, handling 'L' prefixes and invalid formats."""
+    if val is None:
+        return None
+    try:
+        cleaned = str(val).strip().lstrip("Ll")
+        return int(cleaned)
+    except (ValueError, TypeError):
+        return None
 
 
 def extract_citations_from_text(text: str) -> list[Citation]:
@@ -85,6 +109,7 @@ def extract_citations_from_text(text: str) -> list[Citation]:
     seen: set[tuple[str | None, str, int | None, int | None]] = set()
 
     for match in CITATION_REGEX.finditer(text):
+        full_match = match.group(0)
         # Check context immediately preceding match for URL scheme
         start_idx = match.start()
         prefix = text[max(0, start_idx - 10):start_idx]
@@ -122,6 +147,24 @@ def extract_citations_from_text(text: str) -> list[Citation]:
             raw_path = raw_path[2:]
         elif raw_path.startswith("/"):
             raw_path = raw_path[1:]
+
+        # Filter out standalone words (Chapter:1-10, Step:1-5) that are not code files
+        # unless matching known root code files, having a repository prefix, or enclosed in backticks/brackets
+        has_extension = "." in raw_path
+        has_slash = "/" in raw_path
+        is_delimited = (
+            (full_match.startswith("`") and full_match.endswith("`"))
+            or (full_match.startswith("[") and full_match.endswith("]"))
+        )
+
+        if not has_extension and not has_slash:
+            is_known = (
+                raw_path.lower() in KNOWN_ROOT_CODE_FILENAMES
+                or any(raw_path.lower().startswith(p) for p in KNOWN_ROOT_CODE_PREFIXES)
+            )
+            has_repo = repo is not None
+            if not (is_known or has_repo or is_delimited):
+                continue
 
         start_str = match.group(3)
         end_str = match.group(4)
@@ -165,8 +208,10 @@ def citations_from_chunks(chunks: list[dict[str, Any]]) -> list[Citation]:
         lang = chunk.get("language") or (chunk.get("metadata", {}) or {}).get("language")
         snippet = chunk.get("text")
 
-        start_val = int(start) if start is not None else None
-        end_val = int(end) if end is not None else start_val
+        start_val = _safe_line_number(start)
+        end_val = _safe_line_number(end)
+        if end_val is None:
+            end_val = start_val
         if start_val is not None and end_val is not None and start_val > end_val:
             start_val, end_val = end_val, start_val
 
