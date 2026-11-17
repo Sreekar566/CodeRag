@@ -86,3 +86,18 @@ class TestTokenizer:
         }
         tokens = estimate_chunk_tokens(chunk)
         assert tokens > count_tokens(chunk["text"])
+
+    def test_estimate_chunk_tokens_none_text(self):
+        chunk = {
+            "path": "empty.py",
+            "start_line": 1,
+            "end_line": 5,
+            "text": None,
+        }
+        tokens = estimate_chunk_tokens(chunk)
+        assert tokens > 0
+
+    def test_truncate_text_to_tokens_none_text(self):
+        truncated, count = truncate_text_to_tokens(None, 100)
+        assert truncated == ""
+        assert count == 0

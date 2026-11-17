@@ -151,6 +151,24 @@ def test_citation_metrics_hallucinated():
     assert rec == 1.0
 
 
+def test_citation_metrics_with_repo_prefixed_strings():
+    citations = [
+        "myorg/backend:app/auth/routes.py:10-25",
+        "`myorg/backend:app/auth/forms.py:1-20`",
+    ]
+    sources = [
+        {"path": "app/auth/routes.py", "start_line": 1, "end_line": 50, "repo": "myorg/backend"},
+        {"path": "app/auth/forms.py", "start_line": 1, "end_line": 20, "repo": "myorg/backend"},
+    ]
+    expected = ["app/auth/routes.py", "app/auth/forms.py"]
+
+    prec, rec, hall, groundedness = compute_citation_metrics(citations, sources, expected)
+    assert prec == 1.0
+    assert rec == 1.0
+    assert hall == []
+    assert groundedness == 1.0
+
+
 def test_symbol_coverage():
     answer = "The User class defines set_password and check_password methods along with avatar."
     expected = ["User", "set_password", "check_password", "non_existent_method"]

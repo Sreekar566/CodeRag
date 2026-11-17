@@ -145,7 +145,20 @@ def compute_citation_metrics(
         elif isinstance(c, dict) and "path" in c:
             cited_paths.append(normalize_file_path(c["path"]))
         elif isinstance(c, str):
-            cited_paths.append(normalize_file_path(c.split(":")[0]))
+            clean_str = c.strip("`[]() \t\n\r\"'")
+            parts = clean_str.split(":")
+            if len(parts) >= 3:
+                # [repo:]path:start-end
+                path_part = parts[1]
+            elif len(parts) == 2:
+                # Could be path:line or repo:path
+                if re.match(r"^L?\d+(?:-L?\d+)?$", parts[1].strip()):
+                    path_part = parts[0]
+                else:
+                    path_part = parts[1]
+            else:
+                path_part = parts[0]
+            cited_paths.append(normalize_file_path(path_part))
 
     if not cited_paths:
         # If no citations were made:

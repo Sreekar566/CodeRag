@@ -61,7 +61,7 @@ def truncate_text_to_tokens(
     Returns:
         tuple of (truncated_text, token_count)
     """
-    if max_tokens <= 0:
+    if text is None or max_tokens <= 0:
         return "", 0
 
     current_tokens = count_tokens(text, encoding_name=encoding_name)
@@ -118,7 +118,8 @@ def estimate_chunk_tokens(chunk: dict[str, Any], encoding_name: str = DEFAULT_EN
     start = chunk.get("start_line") or chunk.get("metadata", {}).get("start_line", 1)
     end = chunk.get("end_line") or chunk.get("metadata", {}).get("end_line", 1)
     lang = chunk.get("language") or chunk.get("metadata", {}).get("language", "")
-    text = chunk.get("text", "").strip()
+    raw_text = chunk.get("text") or ""
+    text = raw_text.strip()
 
     header = f"[Source]\nFile: {path} (Lines {start}-{end})\nLanguage: {lang}\n```{lang}\n"
     footer = "\n```"

@@ -284,12 +284,39 @@ class RAGEngine:
     ) -> tuple[list[Citation], float]:
         """
         Extract citations from generated text, falling back to top source chunks if none found.
+        Enriches in-text citations with repository, language, and snippet metadata from selected chunks.
         Returns (citations, citation_resolution_latency_ms).
         """
         timer = StageTimer().start()
         in_text_citations = extract_citations_from_text(answer_text)
         if in_text_citations:
             citations = in_text_citations
+            if selected_chunks:
+                for cit in citations:
+                    for chunk in selected_chunks:
+                        chunk_path = chunk.get("path") or (chunk.get("metadata", {}) or {}).get("path")
+                        if not chunk_path:
+                            continue
+                        chunk_repo = chunk.get("repo") or (chunk.get("metadata", {}) or {}).get("repo")
+
+                        norm_cit_path = cit.path.strip().replace("\\", "/").lstrip("./").lstrip("/")
+                        norm_chunk_path = str(chunk_path).strip().replace("\\", "/").lstrip("./").lstrip("/")
+
+                        path_matches = (
+                            norm_cit_path == norm_chunk_path
+                            or norm_cit_path.endswith("/" + norm_chunk_path)
+                            or norm_chunk_path.endswith("/" + norm_cit_path)
+                        )
+                        if path_matches:
+                            if cit.repo and chunk_repo and cit.repo != chunk_repo:
+                                continue
+                            if not cit.repo and chunk_repo:
+                                cit.repo = chunk_repo
+                            if not cit.language:
+                                cit.language = chunk.get("language") or (chunk.get("metadata", {}) or {}).get("language")
+                            if not cit.snippet:
+                                cit.snippet = chunk.get("text")
+                            break
         else:
             citations = citations_from_chunks(selected_chunks)
         citations_ms = timer.stop()

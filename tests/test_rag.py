@@ -43,6 +43,12 @@ class TestPromptAndCitations:
     def test_format_code_context_empty(self):
         assert format_code_context([]) == "No relevant code context found."
 
+    def test_format_code_context_none_text(self):
+        chunks = [{"path": "blank.py", "start_line": 1, "end_line": 5, "text": None}]
+        context = format_code_context(chunks)
+        assert "[Source 1]" in context
+        assert "File: blank.py" in context
+
     def test_build_rag_prompt(self):
         chunks = [
             {

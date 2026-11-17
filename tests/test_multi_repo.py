@@ -101,6 +101,12 @@ def test_multi_repo_querying_and_context_assembly():
     assert "src/App.tsx" in citation_paths
     assert "app/auth/routes.py" in citation_paths
 
+    citation_repos = {c.path: c.repo for c in response.citations}
+    assert citation_repos["src/App.tsx"] == "myorg/frontend"
+    assert citation_repos["app/auth/routes.py"] == "myorg/backend"
+    assert any("myorg/frontend:src/App.tsx:1-20" in c.format_citation() for c in response.citations)
+    assert any("myorg/backend:app/auth/routes.py:1-25" in c.format_citation() for c in response.citations)
+
 
 def test_answer_multi_repo_convenience_method():
     dummy_embed = lambda q: [0.1, 0.2]

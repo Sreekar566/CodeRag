@@ -31,7 +31,8 @@ def format_code_context(chunks: list[dict[str, Any]]) -> str:
         start = chunk.get("start_line") or (chunk.get("metadata", {}) or {}).get("start_line", 1)
         end = chunk.get("end_line") or (chunk.get("metadata", {}) or {}).get("end_line", 1)
         lang = chunk.get("language") or (chunk.get("metadata", {}) or {}).get("language", "")
-        text = chunk.get("text", "").strip()
+        raw_text = chunk.get("text") or ""
+        text = raw_text.strip()
         is_truncated = chunk.get("truncated", False)
 
         header_suffix = " [Truncated]" if is_truncated else ""

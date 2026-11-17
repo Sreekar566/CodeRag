@@ -368,3 +368,49 @@ class TestCitationsFromChunks:
         assert citations[1].repo == "org/backend"
         assert citations[0].format_citation() == "org/frontend:main.py:1-5"
         assert citations[1].format_citation() == "org/backend:main.py:1-5"
+
+    def test_extract_with_repo_prefix_slash(self):
+        text = "Frontend renders in `myorg/frontend:src/App.tsx:1-20`."
+        citations = extract_citations_from_text(text)
+        assert len(citations) == 1
+        assert citations[0].repo == "myorg/frontend"
+        assert citations[0].path == "src/App.tsx"
+        assert citations[0].start_line == 1
+        assert citations[0].end_line == 20
+        assert citations[0].format_citation() == "myorg/frontend:src/App.tsx:1-20"
+
+    def test_extract_with_repo_prefix_single(self):
+        text = "Backend handles auth in [backend:app/auth/routes.py:10-25]."
+        citations = extract_citations_from_text(text)
+        assert len(citations) == 1
+        assert citations[0].repo == "backend"
+        assert citations[0].path == "app/auth/routes.py"
+        assert citations[0].start_line == 10
+        assert citations[0].end_line == 25
+        assert citations[0].format_citation() == "backend:app/auth/routes.py:10-25"
+
+    def test_extract_multi_repo_no_collision_same_file(self):
+        text = (
+            "Frontend component in `myorg/frontend:src/index.tsx:1-15`, while "
+            "backend entrypoint is in `myorg/backend:src/index.tsx:1-15`."
+        )
+        citations = extract_citations_from_text(text)
+        assert len(citations) == 2
+        assert citations[0].repo == "myorg/frontend"
+        assert citations[0].path == "src/index.tsx"
+        assert citations[1].repo == "myorg/backend"
+        assert citations[1].path == "src/index.tsx"
+
+    def test_extract_inverted_line_numbers(self):
+        text = "Reversed line range in app/auth/routes.py:25-10."
+        citations = extract_citations_from_text(text)
+        assert len(citations) == 1
+        assert citations[0].start_line == 10
+        assert citations[0].end_line == 25
+
+    def test_extract_windows_drive_letter_not_repo(self):
+        text = "Local path file at C:/Users/project/main.py:5-15."
+        citations = extract_citations_from_text(text)
+        assert len(citations) == 1
+        assert citations[0].repo is None
+        assert "main.py" in citations[0].path
