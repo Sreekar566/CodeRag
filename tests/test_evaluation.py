@@ -25,6 +25,8 @@ from src.evaluation.metrics import (
     evaluate_abstention,
     match_file_path,
     normalize_file_path,
+    normalize_repo,
+    split_repo_and_path,
 )
 from src.evaluation.models import (
     BenchmarkItem,
@@ -187,6 +189,138 @@ def test_citation_metrics_with_root_extensionless_files():
     assert rec == 1.0
     assert hall == []
     assert groundedness == 1.0
+
+
+def test_split_repo_and_path():
+    assert split_repo_and_path("app/auth/routes.py") == (None, "app/auth/routes.py")
+    assert split_repo_and_path("backend:app/auth/routes.py") == ("backend", "app/auth/routes.py")
+    assert split_repo_and_path("myorg/backend:app/auth/routes.py") == ("myorg/backend", "app/auth/routes.py")
+    assert split_repo_and_path("myorg/backend:app/auth/routes.py:10-25") == ("myorg/backend", "app/auth/routes.py")
+    assert split_repo_and_path("C:/app/auth/routes.py") == (None, "C:/app/auth/routes.py")
+    assert split_repo_and_path("C:/app/auth/routes.py:10-25") == (None, "C:/app/auth/routes.py")
+    assert split_repo_and_path("myorg/backend:C:/app/auth/routes.py") == ("myorg/backend", "C:/app/auth/routes.py")
+    assert split_repo_and_path("`myorg/backend:app/auth/forms.py:1-20`") == ("myorg/backend", "app/auth/forms.py")
+    assert split_repo_and_path("[models.py:L15-L30]") == (None, "models.py")
+    assert split_repo_and_path("Dockerfile:1-10") == (None, "Dockerfile")
+    assert split_repo_and_path("myorg/infra:Procfile:1-5") == ("myorg/infra", "Procfile")
+    assert split_repo_and_path("https://github.com/org/repo/blob/main/app.py") == (None, "https://github.com/org/repo/blob/main/app.py")
+    assert split_repo_and_path("") == (None, "")
+
+
+def test_normalize_repo():
+    assert normalize_repo("myorg/backend") == "myorg/backend"
+    assert normalize_repo("myorg/backend.git") == "myorg/backend"
+    assert normalize_repo("./myorg/backend/") == "myorg/backend"
+    assert normalize_repo("backend\\sub") == "backend/sub"
+    assert normalize_repo("") == ""
+
+
+def test_match_file_path_with_repo_prefixes():
+    # Candidate specifies repo, expected does not
+    assert match_file_path("myorg/backend:app/auth/routes.py", "app/auth/routes.py") is True
+    assert match_file_path("backend:app/auth/routes.py", "app/auth/routes.py") is True
+
+    # Expected specifies repo, candidate does not
+    assert match_file_path("app/auth/routes.py", "myorg/backend:app/auth/routes.py") is True
+    assert match_file_path("app/auth/routes.py", "backend:app/auth/routes.py") is True
+
+    # Both specify repo - exact or owner/repo matching
+    assert match_file_path("myorg/backend:app/auth/routes.py", "myorg/backend:app/auth/routes.py") is True
+    assert match_file_path("backend:app/auth/routes.py", "myorg/backend:app/auth/routes.py") is True
+    assert match_file_path("myorg/backend:app/auth/routes.py", "backend:app/auth/routes.py") is True
+
+
+def test_match_file_path_rejects_repo_conflict():
+    # Conflicting repository identifiers
+    assert match_file_path("frontend:app/auth/routes.py", "backend:app/auth/routes.py") is False
+    assert match_file_path("myorg/frontend:app/auth/routes.py", "myorg/backend:app/auth/routes.py") is False
+    assert match_file_path("org1/backend:app/auth/routes.py", "org2/backend:app/auth/routes.py") is False
+
+
+def test_match_file_path_windows_paths():
+    assert match_file_path("C:/app/auth/routes.py", "app/auth/routes.py") is True
+    assert match_file_path("app/auth/routes.py", "C:/app/auth/routes.py") is True
+    assert match_file_path("backend:C:/app/auth/routes.py", "app/auth/routes.py") is True
+    assert match_file_path("backend:C:/app/auth/routes.py", "backend:app/auth/routes.py") is True
+    assert match_file_path("frontend:C:/app/auth/routes.py", "backend:app/auth/routes.py") is False
+
+
+def test_retrieval_metrics_with_repo_prefixed_expected():
+    retrieved = [
+        {"path": "app/auth/routes.py"},
+        {"path": "app/models.py"},
+        {"path": "config.py"},
+    ]
+    expected = ["myorg/backend:app/auth/routes.py"]
+    metrics = compute_retrieval_metrics(retrieved, expected, k=3)
+
+    assert metrics.hit is True
+    assert metrics.hit_rate == 1.0
+    assert metrics.mrr == 1.0
+    assert metrics.recall_at_k == 1.0
+    assert metrics.relevant_files_found == ["myorg/backend:app/auth/routes.py"]
+
+
+def test_retrieval_metrics_with_repo_conflict():
+    retrieved = [
+        {"path": "app/auth/routes.py", "repo": "frontend"},
+        {"path": "app/models.py", "repo": "frontend"},
+    ]
+    expected = ["backend:app/auth/routes.py"]
+    metrics = compute_retrieval_metrics(retrieved, expected, k=3)
+
+    assert metrics.hit is False
+    assert metrics.hit_rate == 0.0
+    assert metrics.mrr == 0.0
+    assert metrics.recall_at_k == 0.0
+    assert metrics.relevant_files_found == []
+
+
+def test_citation_metrics_with_repo_prefixed_expected():
+    citations = [
+        Citation(path="app/auth/routes.py", start_line=10, end_line=25),
+    ]
+    sources = [
+        {"path": "app/auth/routes.py", "start_line": 1, "end_line": 50},
+    ]
+    expected = ["myorg/backend:app/auth/routes.py"]
+
+    prec, rec, hall, groundedness = compute_citation_metrics(citations, sources, expected)
+    assert prec == 1.0
+    assert rec == 1.0
+    assert hall == []
+    assert groundedness == 1.0
+
+
+def test_citation_metrics_with_repo_prefixed_sources():
+    citations = [
+        "app/auth/routes.py:10-25",
+    ]
+    sources = [
+        {"path": "myorg/backend:app/auth/routes.py", "start_line": 1, "end_line": 50},
+    ]
+    expected = ["app/auth/routes.py"]
+
+    prec, rec, hall, groundedness = compute_citation_metrics(citations, sources, expected)
+    assert prec == 1.0
+    assert rec == 1.0
+    assert hall == []
+    assert groundedness == 1.0
+
+
+def test_citation_metrics_rejects_cross_repo_citation():
+    citations = [
+        "frontend:app/auth/routes.py:10-25",
+    ]
+    sources = [
+        {"path": "backend:app/auth/routes.py", "start_line": 1, "end_line": 50},
+    ]
+    expected = ["backend:app/auth/routes.py"]
+
+    prec, rec, hall, groundedness = compute_citation_metrics(citations, sources, expected)
+    assert groundedness == 0.0
+    assert prec == 0.0
+    assert "frontend:app/auth/routes.py" in hall
 
 
 def test_symbol_coverage():

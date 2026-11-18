@@ -11,6 +11,11 @@ from typing import Any, Iterable
 from src.evaluation.models import GenerationMetrics, RetrievalMetrics
 
 
+NON_CODE_DOMAIN_SUFFIXES = (
+    ".com", ".org", ".net", ".edu", ".gov", ".io", ".co", ".info", ".biz"
+)
+
+
 def normalize_file_path(path: str) -> str:
     """Normalize file path for consistent matching across environments."""
     if not path:
@@ -23,13 +28,97 @@ def normalize_file_path(path: str) -> str:
     return clean
 
 
+def normalize_repo(repo: str) -> str:
+    """Normalize repository identifier (owner/repo or repo) for comparison."""
+    if not repo:
+        return ""
+    clean = repo.strip().replace("\\", "/").rstrip("/")
+    while clean.startswith("./"):
+        clean = clean[2:]
+    clean = clean.lstrip("/")
+    if clean.lower().endswith(".git"):
+        clean = clean[:-4]
+    return clean
+
+
+def split_repo_and_path(path_str: str) -> tuple[str | None, str]:
+    """
+    Split a path string into an optional repository identifier and normalized file path.
+    Handles 'repo:path', 'owner/repo:path', Windows drive letters ('C:/path'),
+    and trailing line number indicators ('path:10-25').
+    """
+    if not path_str:
+        return None, ""
+
+    s = path_str.strip("`[]() \t\n\r\"'").replace("\\", "/")
+    if not s:
+        return None, ""
+
+    # Don't split URL schemes
+    if "://" in s:
+        return None, s
+
+    parts = s.split(":")
+    if len(parts) == 1:
+        return None, parts[0]
+
+    # Strip trailing line numbers (e.g., :10-25 or :L10-L25) if present
+    has_trailing_line = bool(re.match(r"^L?\d+(?:-L?\d+)?$", parts[-1].strip(), re.IGNORECASE))
+    if has_trailing_line and len(parts) > 1:
+        parts = parts[:-1]
+
+    if len(parts) == 1:
+        return None, parts[0]
+
+    # Windows drive letter e.g. C:/path
+    if len(parts[0]) == 1 and parts[0].isalpha():
+        return None, ":".join(parts)
+
+    # Domain with port e.g. example.com:8080
+    if any(parts[0].lower().endswith(dom) for dom in NON_CODE_DOMAIN_SUFFIXES):
+        return None, s
+
+    # Repo with Windows drive letter e.g. repo:C:/path
+    if len(parts) >= 2 and len(parts[1]) == 1 and parts[1].isalpha():
+        repo = parts[0]
+        path = ":".join(parts[1:])
+        return repo, path
+
+    repo = parts[0]
+    path = ":".join(parts[1:])
+    return repo, path
+
+
+def match_repo(repo_a: str | None, repo_b: str | None) -> bool:
+    """
+    Check if two repository identifiers match.
+    Returns True if either is None (unspecified repo matches any),
+    or if both refer to the same repository (e.g. 'repo' matches 'owner/repo').
+    """
+    if not repo_a or not repo_b:
+        return True
+    ra = normalize_repo(repo_a).lower()
+    rb = normalize_repo(repo_b).lower()
+    if ra == rb:
+        return True
+    if ra.endswith("/" + rb) or rb.endswith("/" + ra):
+        return True
+    return False
+
+
 def match_file_path(candidate: str, expected: str) -> bool:
     """
     Check if a candidate file path matches the expected file path.
-    Supports exact matching and relative/suffix matching.
+    Supports repository prefixes, exact matching, and relative/suffix matching.
     """
-    c = normalize_file_path(candidate).lower()
-    e = normalize_file_path(expected).lower()
+    cand_repo, cand_path = split_repo_and_path(candidate)
+    exp_repo, exp_path = split_repo_and_path(expected)
+
+    if not match_repo(cand_repo, exp_repo):
+        return False
+
+    c = normalize_file_path(cand_path).lower()
+    e = normalize_file_path(exp_path).lower()
     if not c or not e:
         return False
     if c == e:
@@ -65,6 +154,9 @@ def compute_retrieval_metrics(
     for item in retrieved_chunks:
         if isinstance(item, dict):
             p = item.get("path") or item.get("metadata", {}).get("path", "")
+            repo = item.get("repo") or (item.get("metadata", {}) or {}).get("repo", "")
+            if repo and p and not str(p).startswith(f"{repo}:"):
+                p = f"{repo}:{p}"
         else:
             p = str(item)
         if p:
@@ -131,41 +223,45 @@ def compute_citation_metrics(
         (citation_precision, citation_recall, hallucinated_citations, groundedness_score)
     """
     # Extract source paths available in the context chunks
-    context_paths: set[str] = set()
+    context_paths: list[str] = []
     for s in retrieved_sources:
-        p = s.get("path") or s.get("metadata", {}).get("path", "")
-        if p:
-            context_paths.add(normalize_file_path(p).lower())
+        if isinstance(s, dict):
+            p = s.get("path") or (s.get("metadata", {}) or {}).get("path", "")
+            repo = s.get("repo") or (s.get("metadata", {}) or {}).get("repo", "")
+            if p:
+                if repo and not str(p).startswith(f"{repo}:"):
+                    context_paths.append(f"{repo}:{p}")
+                else:
+                    context_paths.append(str(p))
+        elif s:
+            context_paths.append(str(s))
 
     # Extract cited paths
     cited_paths: list[str] = []
     for c in citations:
         if hasattr(c, "path"):
-            cited_paths.append(normalize_file_path(c.path))
+            p = str(c.path)
+            repo = getattr(c, "repo", None)
+            if repo and not p.startswith(f"{repo}:"):
+                cited_paths.append(f"{repo}:{p}")
+            else:
+                cited_paths.append(p)
         elif isinstance(c, dict) and "path" in c:
-            cited_paths.append(normalize_file_path(c["path"]))
+            p = str(c["path"])
+            repo = c.get("repo")
+            if repo and not p.startswith(f"{repo}:"):
+                cited_paths.append(f"{repo}:{p}")
+            else:
+                cited_paths.append(p)
         elif isinstance(c, str):
             clean_str = c.strip("`[]() \t\n\r\"'")
-            parts = clean_str.split(":")
-            if len(parts) >= 4 and len(parts[1]) == 1 and parts[1].isalpha():
-                # [repo:]C:/path:start-end
-                path_part = f"{parts[1]}:{parts[2]}"
-            elif len(parts) >= 3:
-                if len(parts[0]) == 1 and parts[0].isalpha():
-                    # C:/path:start-end
-                    path_part = f"{parts[0]}:{parts[1]}"
-                else:
-                    # [repo:]path:start-end
-                    path_part = parts[1]
-            elif len(parts) == 2:
-                # Could be path:line or repo:path
-                if re.match(r"^L?\d+(?:-L?\d+)?$", parts[1].strip()):
-                    path_part = parts[0]
-                else:
-                    path_part = parts[1]
-            else:
-                path_part = parts[0]
-            cited_paths.append(normalize_file_path(path_part))
+            repo, path = split_repo_and_path(clean_str)
+            if repo and path and not path.startswith(f"{repo}:"):
+                cited_paths.append(f"{repo}:{path}")
+            elif path:
+                cited_paths.append(path)
+            elif clean_str:
+                cited_paths.append(clean_str)
 
     if not cited_paths:
         # If no citations were made:
@@ -178,9 +274,8 @@ def compute_citation_metrics(
     grounded_count = 0
     for cp in cited_paths:
         matched = False
-        cp_lower = cp.lower()
         for ctx_p in context_paths:
-            if cp_lower == ctx_p or cp_lower.endswith("/" + ctx_p) or ctx_p.endswith("/" + cp_lower):
+            if match_file_path(cp, ctx_p):
                 matched = True
                 break
         if matched:
