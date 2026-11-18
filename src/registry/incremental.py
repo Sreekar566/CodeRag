@@ -84,6 +84,296 @@ class IncrementalIndexer:
         self.registry = registry or get_repo_registry()
         self.embedder_model = embedder_model
 
+    def _resolve_target_collection(self, owner: str, repo: str, collection_name: str | None) -> str:
+        """Resolve and sanitize target collection name."""
+        if collection_name is None:
+            collection_name = f"{owner}_{repo}"
+        return sanitize_collection_name(collection_name)
+
+    def _resolve_branch(self, owner: str, repo: str, token: str | None, branch: str | None) -> str:
+        """Resolve branch, auto-detecting default remote branch when required."""
+        resolved = branch
+        if not resolved or resolved == "auto":
+            try:
+                resolved = get_default_branch(owner, repo, token)
+            except Exception as e:
+                logger.warning(
+                    f"Could not auto-detect default branch for {owner}/{repo}: {e}. Falling back to 'main'"
+                )
+                resolved = "main"
+        return resolved
+
+    def _get_latest_commit_sha(self, owner: str, repo: str, token: str | None, branch: str) -> str | None:
+        """Attempt to fetch the latest commit SHA for the target branch."""
+        try:
+            return get_latest_commit_sha(owner, repo, token, branch=branch)
+        except Exception as e:
+            logger.warning(f"Could not retrieve latest commit SHA for {owner}/{repo}@{branch}: {e}")
+            return None
+
+    def _build_index_result(
+        self,
+        owner: str,
+        repo: str,
+        target_collection: str,
+        branch: str,
+        latest_commit_sha: str | None,
+        status: str,
+        files_processed: int,
+        chunks_stored: int,
+        files_added: int,
+        files_modified: int,
+        files_deleted: int,
+        files_unchanged: int,
+        total_tree_files: int,
+        filtered_files: int,
+        skipped_files: list[str],
+        audit_log: Any = None,
+    ) -> IncrementalIndexResult:
+        """Construct a standardized IncrementalIndexResult."""
+        audit_dict = (
+            audit_log.to_dict()
+            if hasattr(audit_log, "to_dict")
+            else (audit_log if isinstance(audit_log, dict) else None)
+        )
+        return IncrementalIndexResult(
+            owner=owner,
+            repo=repo,
+            collection=target_collection,
+            branch=branch,
+            commit_sha=latest_commit_sha,
+            status=status,
+            files_processed=files_processed,
+            chunks_stored=chunks_stored,
+            files_added=files_added,
+            files_modified=files_modified,
+            files_deleted=files_deleted,
+            files_unchanged=files_unchanged,
+            chunks_added=chunks_stored,
+            chunks_deleted=files_deleted + files_modified,
+            total_tree_files=total_tree_files,
+            filtered_files=filtered_files,
+            skipped_files=skipped_files,
+            audit_log=audit_dict,
+        )
+
+    def _check_unchanged_fast_path(
+        self,
+        owner: str,
+        repo: str,
+        target_collection: str,
+        branch: str,
+        latest_commit_sha: str | None,
+        prev_meta: RepositoryMetadata | None,
+        force: bool,
+    ) -> IncrementalIndexResult | None:
+        """
+        Fast-path check: if repository is already ready and latest remote commit SHA matches,
+        skip tree fetching and processing entirely.
+        """
+        if (
+            not force
+            and prev_meta is not None
+            and prev_meta.status == "ready"
+            and latest_commit_sha is not None
+            and prev_meta.commit_sha == latest_commit_sha
+        ):
+            logger.info(
+                f"Repository {owner}/{repo}@{branch} is unchanged at commit {latest_commit_sha}."
+            )
+            return self._build_index_result(
+                owner=owner,
+                repo=repo,
+                target_collection=target_collection,
+                branch=branch,
+                latest_commit_sha=latest_commit_sha,
+                status="unchanged",
+                files_processed=0,
+                chunks_stored=0,
+                files_added=0,
+                files_modified=0,
+                files_deleted=0,
+                files_unchanged=prev_meta.file_count,
+                total_tree_files=prev_meta.file_count,
+                filtered_files=prev_meta.file_count,
+                skipped_files=[],
+            )
+        return None
+
+    def _fetch_and_audit_tree(
+        self,
+        owner: str,
+        repo: str,
+        token: str | None,
+        branch: str,
+        latest_commit_sha: str | None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], Any, dict[str, str]]:
+        """
+        Fetch repository tree from GitHub and filter out noise files with audit logging.
+        Returns (tree, filtered_items, audit_log, current_file_shas).
+        """
+        tree = get_repo_tree(owner, repo, token, branch=branch)
+        repo_id = f"{owner}/{repo}"
+        filtered_items, audit_log = audit_filter_files(
+            tree,
+            repo_id=repo_id,
+            branch=branch,
+            commit_sha=latest_commit_sha,
+        )
+        get_telemetry_collector().record_audit(audit_log)
+
+        current_file_shas = {
+            item["path"]: item.get("sha", "")
+            for item in filtered_items
+            if "path" in item
+        }
+        return tree, filtered_items, audit_log, current_file_shas
+
+    def _purge_chunks_for_files(self, target_collection: str, paths: list[str]) -> None:
+        """Delete stored vector chunks for modified or deleted files."""
+        for path in paths:
+            try:
+                self.vector_store.delete(
+                    where={"path": path},
+                    collection_name=target_collection,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to delete old chunks for {path}: {e}")
+
+    def _determine_changes_and_cleanup(
+        self,
+        target_collection: str,
+        filtered_items: list[dict[str, Any]],
+        prev_meta: RepositoryMetadata | None,
+        force: bool,
+        latest_commit_sha: str | None = None,
+    ) -> tuple[list[str], list[str], list[str], list[str], int, bool, bool]:
+        """
+        Compute file diffs against previously indexed SHAs and purge obsolete chunks.
+        Returns:
+            (files_to_fetch, files_added, files_modified, files_deleted, unchanged_count, is_initial_index, is_delta_unchanged)
+        """
+        is_initial_index = force or (prev_meta is None) or (not prev_meta.file_shas)
+
+        if is_initial_index:
+            if force:
+                try:
+                    self.vector_store.clear(target_collection)
+                except Exception as e:
+                    logger.warning(f"Failed to clear collection {target_collection}: {e}")
+            files_to_fetch = [item["path"] for item in filtered_items if "path" in item]
+            return files_to_fetch, list(files_to_fetch), [], [], 0, True, False
+
+        changes = detect_changes(filtered_items, prev_meta.file_shas)
+        if not changes.has_changes and latest_commit_sha == prev_meta.commit_sha:
+            return [], [], [], [], len(changes.unchanged_files), False, True
+
+        files_deleted = changes.deleted_files
+        files_modified = changes.modified_files
+        files_added = changes.added_files
+        unchanged_count = len(changes.unchanged_files)
+        files_to_fetch = files_added + files_modified
+
+        # Remove chunks for deleted and modified files from vector store
+        self._purge_chunks_for_files(target_collection, files_deleted + files_modified)
+
+        return (
+            files_to_fetch,
+            files_added,
+            files_modified,
+            files_deleted,
+            unchanged_count,
+            False,
+            False,
+        )
+
+    def _fetch_file_contents(
+        self,
+        owner: str,
+        repo: str,
+        token: str | None,
+        files_to_fetch: list[str],
+    ) -> tuple[list[dict[str, str]], list[str]]:
+        """
+        Fetch file contents from GitHub REST API for files to process.
+        Returns (fetched_files, skipped_files).
+        """
+        fetched_files: list[dict[str, str]] = []
+        skipped_files: list[str] = []
+
+        for path in files_to_fetch:
+            try:
+                content = get_file_content(owner, repo, path, token)
+                if content is not None:
+                    fetched_files.append({"path": path, "content": content})
+                else:
+                    skipped_files.append(path)
+            except Exception as e:
+                logger.warning(f"Failed to fetch content for {path}: {e}")
+                skipped_files.append(path)
+
+        return fetched_files, skipped_files
+
+    def _chunk_embed_and_store(
+        self,
+        fetched_files: list[dict[str, str]],
+        target_collection: str,
+        model: Any,
+        chunk_fn: Callable[[str, str], list[dict]],
+    ) -> int:
+        """
+        Chunk new and updated files, generate embeddings, and store them in the vector database.
+        Returns the number of chunks stored.
+        """
+        chunks_to_add: list[dict] = []
+        for f in fetched_files:
+            chunks = chunk_fn(f["content"], f["path"])
+            chunks_to_add.extend(chunks)
+
+        if not chunks_to_add:
+            return 0
+
+        embedded = embed_chunks(chunks_to_add, model=model)
+        return self.vector_store.add_chunks(
+            embedded,
+            collection_name=target_collection,
+        )
+
+    def _update_registry_metadata(
+        self,
+        owner: str,
+        repo: str,
+        target_collection: str,
+        branch: str,
+        latest_commit_sha: str | None,
+        file_count: int,
+        chunk_count: int,
+        current_file_shas: dict[str, str],
+        audit_log: Any,
+    ) -> None:
+        """Update repository metadata in the persistent registry."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        audit_dict = (
+            audit_log.to_dict()
+            if hasattr(audit_log, "to_dict")
+            else (audit_log if isinstance(audit_log, dict) else None)
+        )
+        new_meta = RepositoryMetadata(
+            owner=owner,
+            repo=repo,
+            collection_name=target_collection,
+            branch=branch,
+            commit_sha=latest_commit_sha,
+            indexed_at=now_iso,
+            file_count=file_count,
+            chunk_count=chunk_count,
+            file_shas=current_file_shas,
+            status="ready",
+            error=None,
+            metadata={"audit_log": audit_dict} if audit_dict is not None else {},
+        )
+        self.registry.register(new_meta)
+
     def index_repository(
         self,
         owner: str,
@@ -100,19 +390,8 @@ class IncrementalIndexer:
         If the repo is already indexed and unchanged at the latest commit, re-indexing is skipped.
         If files were modified or deleted, only the delta is processed and synchronized.
         """
-        # Resolve target collection name
-        if collection_name is None:
-            collection_name = f"{owner}_{repo}"
-        target_collection = sanitize_collection_name(collection_name)
-
-        # Resolve branch
-        resolved_branch = branch
-        if not resolved_branch or resolved_branch == "auto":
-            try:
-                resolved_branch = get_default_branch(owner, repo, token)
-            except Exception as e:
-                logger.warning(f"Could not auto-detect default branch for {owner}/{repo}: {e}. Falling back to 'main'")
-                resolved_branch = "main"
+        target_collection = self._resolve_target_collection(owner, repo, collection_name)
+        resolved_branch = self._resolve_branch(owner, repo, token, branch)
 
         # Concurrency control: acquire per-repository lock
         locked = self.registry.acquire_repo_lock(owner, repo, blocking=True)
@@ -120,186 +399,111 @@ class IncrementalIndexer:
             raise RuntimeError(f"Could not acquire lock for repository {owner}/{repo}; indexing already in progress.")
 
         try:
-            # Step 1: Detect latest commit SHA
-            latest_commit_sha: str | None = None
-            try:
-                latest_commit_sha = get_latest_commit_sha(owner, repo, token, branch=resolved_branch)
-            except Exception as e:
-                logger.warning(f"Could not retrieve latest commit SHA for {owner}/{repo}@{resolved_branch}: {e}")
-
-            # Step 2: Check previous indexed state in registry
+            # Step 1 & 2: Remote commit detection and fast-path check
+            latest_commit_sha = self._get_latest_commit_sha(owner, repo, token, resolved_branch)
             prev_meta = self.registry.get(owner, repo)
 
-            # Fast-path: commit SHA matches and not forcing full reindex
-            if (
-                not force
-                and prev_meta is not None
-                and prev_meta.status == "ready"
-                and latest_commit_sha is not None
-                and prev_meta.commit_sha == latest_commit_sha
-            ):
-                logger.info(
-                    f"Repository {owner}/{repo}@{resolved_branch} is unchanged at commit {latest_commit_sha}."
-                )
-                return IncrementalIndexResult(
+            unchanged_result = self._check_unchanged_fast_path(
+                owner=owner,
+                repo=repo,
+                target_collection=target_collection,
+                branch=resolved_branch,
+                latest_commit_sha=latest_commit_sha,
+                prev_meta=prev_meta,
+                force=force,
+            )
+            if unchanged_result is not None:
+                return unchanged_result
+
+            # Mark repository as indexing
+            self.registry.update_status(owner, repo, status="indexing")
+
+            # Step 3: Fetch file tree and filter with transparency audit
+            tree, filtered_items, audit_log, current_file_shas = self._fetch_and_audit_tree(
+                owner=owner,
+                repo=repo,
+                token=token,
+                branch=resolved_branch,
+                latest_commit_sha=latest_commit_sha,
+            )
+
+            # Step 4: Determine file changes and synchronize vector storage
+            (
+                files_to_fetch,
+                files_added,
+                files_modified,
+                files_deleted,
+                unchanged_count,
+                is_initial_index,
+                is_delta_unchanged,
+            ) = self._determine_changes_and_cleanup(
+                target_collection=target_collection,
+                filtered_items=filtered_items,
+                prev_meta=prev_meta,
+                force=force,
+                latest_commit_sha=latest_commit_sha,
+            )
+
+            if is_delta_unchanged:
+                self.registry.update_status(owner, repo, status="ready")
+                return self._build_index_result(
                     owner=owner,
                     repo=repo,
-                    collection=target_collection,
+                    target_collection=target_collection,
                     branch=resolved_branch,
-                    commit_sha=latest_commit_sha,
+                    latest_commit_sha=latest_commit_sha,
                     status="unchanged",
                     files_processed=0,
                     chunks_stored=0,
                     files_added=0,
                     files_modified=0,
                     files_deleted=0,
-                    files_unchanged=prev_meta.file_count,
-                    chunks_added=0,
-                    chunks_deleted=0,
-                    total_tree_files=prev_meta.file_count,
-                    filtered_files=prev_meta.file_count,
+                    files_unchanged=unchanged_count,
+                    total_tree_files=len(tree),
+                    filtered_files=len(filtered_items),
                     skipped_files=[],
+                    audit_log=audit_log,
                 )
 
-            # Mark repository as indexing
-            self.registry.update_status(owner, repo, status="indexing")
-
-            # Step 3: Fetch file tree and filter with transparency audit
-            tree = get_repo_tree(owner, repo, token, branch=resolved_branch)
-            repo_id = f"{owner}/{repo}"
-            filtered_items, audit_log = audit_filter_files(
-                tree,
-                repo_id=repo_id,
-                branch=resolved_branch,
-                commit_sha=latest_commit_sha,
+            # Step 5: Fetch content for delta files
+            fetched_files, skipped_files = self._fetch_file_contents(
+                owner=owner,
+                repo=repo,
+                token=token,
+                files_to_fetch=files_to_fetch,
             )
-            get_telemetry_collector().record_audit(audit_log)
 
-            current_file_shas = {
-                item["path"]: item.get("sha", "")
-                for item in filtered_items
-                if "path" in item
-            }
-
+            # Step 6: Chunk, embed, and store delta chunks
             model = embedder_model if embedder_model is not None else self.embedder_model
-
-            # Step 4: Determine changes
-            is_initial_index = force or (prev_meta is None) or (not prev_meta.file_shas)
-
-            files_to_fetch: list[str] = []
-            files_deleted: list[str] = []
-            files_modified: list[str] = []
-            files_added: list[str] = []
-            unchanged_count = 0
-
-            if is_initial_index:
-                if force:
-                    try:
-                        self.vector_store.clear(target_collection)
-                    except Exception as e:
-                        logger.warning(f"Failed to clear collection {target_collection}: {e}")
-                files_to_fetch = [item["path"] for item in filtered_items if "path" in item]
-                files_added = list(files_to_fetch)
-            else:
-                changes = detect_changes(filtered_items, prev_meta.file_shas)
-                if not changes.has_changes and latest_commit_sha == prev_meta.commit_sha:
-                    self.registry.update_status(owner, repo, status="ready")
-                    return IncrementalIndexResult(
-                        owner=owner,
-                        repo=repo,
-                        collection=target_collection,
-                        branch=resolved_branch,
-                        commit_sha=latest_commit_sha,
-                        status="unchanged",
-                        files_processed=0,
-                        chunks_stored=0,
-                        files_added=0,
-                        files_modified=0,
-                        files_deleted=0,
-                        files_unchanged=len(changes.unchanged_files),
-                        chunks_added=0,
-                        chunks_deleted=0,
-                        total_tree_files=len(tree),
-                        filtered_files=len(filtered_items),
-                        skipped_files=[],
-                    )
-
-                files_deleted = changes.deleted_files
-                files_modified = changes.modified_files
-                files_added = changes.added_files
-                unchanged_count = len(changes.unchanged_files)
-                files_to_fetch = files_added + files_modified
-
-                # Remove chunks for deleted and modified files from vector store
-                paths_to_delete = files_deleted + files_modified
-                for path in paths_to_delete:
-                    try:
-                        self.vector_store.delete(
-                            where={"path": path},
-                            collection_name=target_collection,
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to delete old chunks for {path}: {e}")
-
-            # Step 5: Fetch content for added and modified files
-            fetched_files: list[dict[str, str]] = []
-            skipped_files: list[str] = []
-
-            for path in files_to_fetch:
-                try:
-                    content = get_file_content(owner, repo, path, token)
-                    if content is not None:
-                        fetched_files.append({"path": path, "content": content})
-                    else:
-                        skipped_files.append(path)
-                except Exception as e:
-                    logger.warning(f"Failed to fetch content for {path}: {e}")
-                    skipped_files.append(path)
-
-            # Step 6: Chunk and embed new/updated files
-            chunks_to_add: list[dict] = []
-            for f in fetched_files:
-                path = f["path"]
-                content = f["content"]
-                chunks = chunk_fn(content, path)
-                chunks_to_add.extend(chunks)
-
-            chunks_stored = 0
-            if chunks_to_add:
-                embedded = embed_chunks(chunks_to_add, model=model)
-                chunks_stored = self.vector_store.add_chunks(
-                    embedded,
-                    collection_name=target_collection,
-                )
-
+            chunks_stored = self._chunk_embed_and_store(
+                fetched_files=fetched_files,
+                target_collection=target_collection,
+                model=model,
+                chunk_fn=chunk_fn,
+            )
             total_chunks = self.vector_store.count(target_collection)
 
             # Step 7: Update registry record
-            now_iso = datetime.now(timezone.utc).isoformat()
-            new_meta = RepositoryMetadata(
+            self._update_registry_metadata(
                 owner=owner,
                 repo=repo,
-                collection_name=target_collection,
+                target_collection=target_collection,
                 branch=resolved_branch,
-                commit_sha=latest_commit_sha,
-                indexed_at=now_iso,
+                latest_commit_sha=latest_commit_sha,
                 file_count=len(filtered_items),
                 chunk_count=total_chunks,
-                file_shas=current_file_shas,
-                status="ready",
-                error=None,
-                metadata={"audit_log": audit_log.to_dict()},
+                current_file_shas=current_file_shas,
+                audit_log=audit_log,
             )
-            self.registry.register(new_meta)
 
+            # Step 8: Assemble final index result
             status_str = "created" if is_initial_index else "updated"
-
-            return IncrementalIndexResult(
+            return self._build_index_result(
                 owner=owner,
                 repo=repo,
-                collection=target_collection,
+                target_collection=target_collection,
                 branch=resolved_branch,
-                commit_sha=latest_commit_sha,
+                latest_commit_sha=latest_commit_sha,
                 status=status_str,
                 files_processed=len(fetched_files),
                 chunks_stored=chunks_stored,
@@ -307,12 +511,10 @@ class IncrementalIndexer:
                 files_modified=len(files_modified),
                 files_deleted=len(files_deleted),
                 files_unchanged=unchanged_count,
-                chunks_added=chunks_stored,
-                chunks_deleted=len(files_deleted) + len(files_modified),
                 total_tree_files=len(tree),
                 filtered_files=len(filtered_items),
                 skipped_files=skipped_files,
-                audit_log=audit_log.to_dict(),
+                audit_log=audit_log,
             )
 
         except Exception as e:

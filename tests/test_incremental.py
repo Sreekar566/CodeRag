@@ -382,3 +382,81 @@ def test_incremental_indexing_chroma_integration(tmp_path):
 
     shutil.rmtree(chroma_dir, ignore_errors=True)
 
+
+def test_resolve_target_collection():
+    indexer = IncrementalIndexer(vector_store=InMemoryVectorStore(), registry=RepoRegistry(storage_path=None))
+    assert indexer._resolve_target_collection("owner", "repo", None) == "owner_repo"
+    assert indexer._resolve_target_collection("owner", "repo", "custom/name") == "custom_name"
+
+
+@patch("src.registry.incremental.get_default_branch")
+def test_resolve_branch(mock_get_branch):
+    indexer = IncrementalIndexer(vector_store=InMemoryVectorStore(), registry=RepoRegistry(storage_path=None))
+    assert indexer._resolve_branch("owner", "repo", "token", "feature") == "feature"
+
+    mock_get_branch.return_value = "develop"
+    assert indexer._resolve_branch("owner", "repo", "token", "auto") == "develop"
+
+    mock_get_branch.side_effect = Exception("Network error")
+    assert indexer._resolve_branch("owner", "repo", "token", None) == "main"
+
+
+def test_purge_chunks_for_files():
+    store = InMemoryVectorStore()
+    store.add_chunks(
+        [
+            {"id": "a.py:1-5", "path": "a.py", "text": "code a", "embedding": [0.1, 0.2]},
+            {"id": "b.py:1-5", "path": "b.py", "text": "code b", "embedding": [0.3, 0.4]},
+        ],
+        collection_name="test_col",
+    )
+    indexer = IncrementalIndexer(vector_store=store, registry=RepoRegistry(storage_path=None))
+
+    indexer._purge_chunks_for_files("test_col", ["a.py"])
+    assert store.count("test_col") == 1
+    assert len(store.get(["a.py:1-5"], collection_name="test_col")) == 0
+    assert len(store.get(["b.py:1-5"], collection_name="test_col")) == 1
+
+
+def test_determine_changes_and_cleanup_initial():
+    store = InMemoryVectorStore()
+    indexer = IncrementalIndexer(vector_store=store, registry=RepoRegistry(storage_path=None))
+
+    items = [{"path": "file1.py", "sha": "s1"}, {"path": "file2.py", "sha": "s2"}]
+    (
+        to_fetch,
+        added,
+        modified,
+        deleted,
+        unchanged,
+        is_initial,
+        is_delta_unchanged,
+    ) = indexer._determine_changes_and_cleanup("test_col", items, prev_meta=None, force=False)
+
+    assert is_initial is True
+    assert is_delta_unchanged is False
+    assert to_fetch == ["file1.py", "file2.py"]
+    assert added == ["file1.py", "file2.py"]
+    assert modified == []
+    assert deleted == []
+    assert unchanged == 0
+
+
+@patch("src.registry.incremental.get_file_content")
+def test_fetch_file_contents_with_failures(mock_content):
+    def fake_fetch(owner, repo, path, token):
+        if path == "good.py":
+            return "print('ok')"
+        if path == "none.py":
+            return None
+        raise RuntimeError("Fetch failure")
+
+    mock_content.side_effect = fake_fetch
+    indexer = IncrementalIndexer(vector_store=InMemoryVectorStore(), registry=RepoRegistry(storage_path=None))
+
+    fetched, skipped = indexer._fetch_file_contents("o", "r", "tok", ["good.py", "none.py", "bad.py"])
+    assert len(fetched) == 1
+    assert fetched[0] == {"path": "good.py", "content": "print('ok')"}
+    assert skipped == ["none.py", "bad.py"]
+
+
