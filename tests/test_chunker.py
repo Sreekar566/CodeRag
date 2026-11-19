@@ -1,5 +1,16 @@
 import pytest
-from src.ingestion.chunker import chunk_text, detect_language, CHUNK_SIZE, OVERLAP
+from src.ingestion.chunker import (
+    CodeChunker,
+    chunk_text,
+    detect_language,
+    compute_cumulative_words,
+    find_line_index_for_word,
+    snap_boundary_to_blank_line,
+    build_chunk,
+    CHUNK_SIZE,
+    OVERLAP,
+    BOUNDARY_SEARCH_WINDOW,
+)
 
 
 def test_detect_language():
@@ -25,6 +36,7 @@ def test_detect_language():
 def test_chunk_text_empty_input():
     assert chunk_text("", "test.py") == []
     assert chunk_text("\n\n\n", "test.py") == []
+    assert chunk_text("   \t  \n  ", "test.py") == []
 
 
 def test_chunk_text_short_file():
@@ -85,3 +97,100 @@ def test_chunk_text_snaps_to_blank_lines():
     assert len(chunks) >= 2
     # The first chunk should snap to the blank line at index 38 (line 39)
     assert chunks[0]["end_line"] == 38 or chunks[0]["end_line"] == 39
+
+
+def test_compute_cumulative_words():
+    lines = ["one two", "three", "", "four five six"]
+    # cumulative should be:
+    # 0 words before line 0
+    # 2 words before line 1 ("one two")
+    # 3 words before line 2 ("three")
+    # 3 words before line 3 ("")
+    # 6 words in entire file (sentinel)
+    expected = [0, 2, 3, 3, 6]
+    assert compute_cumulative_words(lines) == expected
+
+
+def test_find_line_index_for_word():
+    cum = [0, 10, 20, 30, 40]
+    assert find_line_index_for_word(cum, 0) == 0
+    assert find_line_index_for_word(cum, 5) == 1
+    assert find_line_index_for_word(cum, 10) == 1
+    assert find_line_index_for_word(cum, 11) == 2
+    assert find_line_index_for_word(cum, 39) == 4
+    assert find_line_index_for_word(cum, 40) == 4
+
+
+def test_snap_boundary_to_blank_line():
+    lines = ["line1", "line2", "", "line4", "line5", "line6"]
+    # index 2 is blank ("")
+    # if end_line is 3, searching outward within window 2 should find index 2 (offset 1 before)
+    assert snap_boundary_to_blank_line(lines, end_line=3, start_line=0, window=2) == 2
+
+    # if window is 0, no snapping
+    assert snap_boundary_to_blank_line(lines, end_line=3, start_line=0, window=0) == 3
+
+    # if blank line is before or at start_line, do not collapse
+    assert snap_boundary_to_blank_line(lines, end_line=3, start_line=2, window=2) == 3
+
+
+def test_build_chunk():
+    lines = ["def foo():", "    return 42", ""]
+    chunk = build_chunk("app/main.py", lines, start_line=0, end_line=2)
+    assert chunk["path"] == "app/main.py"
+    assert chunk["start_line"] == 1
+    assert chunk["end_line"] == 2
+    assert chunk["text"] == "def foo():\n    return 42"
+    assert chunk["language"] == "python"
+
+    # Custom language override
+    custom_chunk = build_chunk("script.xyz", lines, start_line=0, end_line=2, language="custom_lang")
+    assert custom_chunk["language"] == "custom_lang"
+
+
+def test_code_chunker_custom_parameters():
+    # File with 20 lines, 5 words per line = 100 words total
+    lines = [f"w{i}_1 w{i}_2 w{i}_3 w{i}_4 w{i}_5" for i in range(1, 21)]
+    text = "\n".join(lines)
+
+    chunker = CodeChunker(chunk_size=30, overlap=10, boundary_search_window=2)
+    chunks = chunker.chunk(text, "test.py")
+
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert chunk["language"] == "python"
+        assert chunk["start_line"] >= 1
+        assert chunk["end_line"] >= chunk["start_line"]
+
+
+def test_code_chunker_validation():
+    with pytest.raises(ValueError, match="chunk_size must be positive"):
+        CodeChunker(chunk_size=0)
+
+    with pytest.raises(ValueError, match="overlap must be non-negative"):
+        CodeChunker(chunk_size=100, overlap=-5)
+
+    with pytest.raises(ValueError, match="overlap .* must be strictly less than chunk_size"):
+        CodeChunker(chunk_size=100, overlap=100)
+
+    with pytest.raises(ValueError, match="overlap .* must be strictly less than chunk_size"):
+        CodeChunker(chunk_size=100, overlap=150)
+
+    with pytest.raises(ValueError, match="boundary_search_window must be non-negative"):
+        CodeChunker(boundary_search_window=-1)
+
+
+def test_chunk_text_custom_parameters():
+    lines = [f"word {i} test" for i in range(1, 40)]
+    text = "\n".join(lines)
+
+    chunks = chunk_text(
+        text=text,
+        path="custom.ts",
+        chunk_size=20,
+        overlap=5,
+        boundary_window=0,
+        language="typescript",
+    )
+    assert len(chunks) > 1
+    assert chunks[0]["language"] == "typescript"

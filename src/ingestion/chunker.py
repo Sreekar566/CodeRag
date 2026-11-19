@@ -1,16 +1,22 @@
+"""
+Code chunking utilities for splitting source code files into overlapping windows.
+Snaps boundaries to nearby blank lines and preserves 1-based line range metadata.
+"""
+from __future__ import annotations
+
 import os
+from bisect import bisect_left
+from dataclasses import dataclass
+from typing import Any
 
-# Chunk size and overlap, in approximate tokens (whitespace-split words as a
-# stand-in until an embedding model is chosen and a real tokenizer is wired in).
-# Pick numbers and be ready to explain why.
-CHUNK_SIZE = 400  # e.g. 500
-OVERLAP = 50  # e.g. 50
+# Default chunk size and overlap in approximate tokens (whitespace-separated words)
+CHUNK_SIZE = 400
+OVERLAP = 50
 
-# How far (in lines) to search for a nearby blank line when snapping a chunk
-# boundary, instead of cutting at the exact word count.
-BOUNDARY_SEARCH_WINDOW = 5  # e.g. 5
+# How far (in lines) to search outward for a nearby blank line when snapping chunk boundaries
+BOUNDARY_SEARCH_WINDOW = 5
 
-EXTENSION_TO_LANGUAGE = {
+EXTENSION_TO_LANGUAGE: dict[str, str] = {
     ".py": "python",
     ".js": "javascript",
     ".jsx": "javascript",
@@ -55,7 +61,7 @@ EXTENSION_TO_LANGUAGE = {
     ".txt": "text",
 }
 
-FILENAME_TO_LANGUAGE = {
+FILENAME_TO_LANGUAGE: dict[str, str] = {
     "dockerfile": "dockerfile",
     "makefile": "makefile",
     "vagrantfile": "ruby",
@@ -79,7 +85,162 @@ def detect_language(path: str) -> str:
     return "unknown"
 
 
-def chunk_text(text: str, path: str) -> list[dict]:
+def compute_cumulative_words(lines: list[str]) -> list[int]:
+    """
+    Compute prefix sum of word counts across lines.
+    cumulative_words[i] represents the total words before line i (in lines[0:i]).
+    The final element is a sentinel representing total words in the entire file.
+    """
+    cumulative = [0]
+    total = 0
+    for line in lines:
+        total += len(line.split())
+        cumulative.append(total)
+    return cumulative
+
+
+def find_line_index_for_word(cumulative_words: list[int], target_word: int) -> int:
+    """
+    Find the line index corresponding to a word offset using binary search.
+    Returns the first line index where cumulative_words[i] >= target_word.
+    Runs in O(log L) time.
+    """
+    return bisect_left(cumulative_words, target_word)
+
+
+def snap_boundary_to_blank_line(
+    lines: list[str],
+    end_line: int,
+    start_line: int,
+    window: int = BOUNDARY_SEARCH_WINDOW,
+) -> int:
+    """
+    Search outward from end_line within a window to find the closest blank line.
+    Prevents snapping if it would collapse the chunk to or below start_line.
+    """
+    if window is None or window <= 0:
+        return end_line
+
+    for offset in range(window + 1):
+        before = end_line - offset
+        after = end_line + offset
+
+        if 0 <= before < len(lines) and before > start_line and lines[before].strip() == "":
+            return before
+        if after < len(lines) and lines[after].strip() == "":
+            return after
+
+    return end_line
+
+
+def build_chunk(
+    path: str,
+    lines: list[str],
+    start_line: int,
+    end_line: int,
+    language: str | None = None,
+) -> dict[str, Any]:
+    """
+    Construct a standardized chunk dictionary from line boundaries.
+    Converts 0-based start_line index to 1-based start line number.
+    """
+    chunk_body = "\n".join(lines[start_line:end_line])
+    return {
+        "path": path,
+        "start_line": start_line + 1,  # 1-based indexing for citations
+        "end_line": end_line,
+        "text": chunk_body,
+        "language": language or detect_language(path),
+    }
+
+
+@dataclass
+class CodeChunker:
+    """
+    Configurable chunker for source code files using word count windows
+    and blank-line boundary snapping.
+    """
+    chunk_size: int = CHUNK_SIZE
+    overlap: int = OVERLAP
+    boundary_search_window: int = BOUNDARY_SEARCH_WINDOW
+
+    def __post_init__(self) -> None:
+        if self.chunk_size <= 0:
+            raise ValueError(f"chunk_size must be positive, got {self.chunk_size}")
+        if self.overlap < 0:
+            raise ValueError(f"overlap must be non-negative, got {self.overlap}")
+        if self.overlap >= self.chunk_size:
+            raise ValueError(
+                f"overlap ({self.overlap}) must be strictly less than chunk_size ({self.chunk_size})"
+            )
+        if self.boundary_search_window is not None and self.boundary_search_window < 0:
+            raise ValueError(
+                f"boundary_search_window must be non-negative or None, got {self.boundary_search_window}"
+            )
+
+    def chunk(
+        self,
+        text: str,
+        path: str,
+        language: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Split a file's text into overlapping chunks, each tagged with the file
+        path, language, and 1-based line range.
+        """
+        if not text or not text.strip():
+            return []
+
+        lines = text.split("\n")
+        cumulative_words = compute_cumulative_words(lines)
+        total_words = cumulative_words[-1]
+
+        if total_words == 0:
+            return []
+
+        step = self.chunk_size - self.overlap
+        detected_lang = language or detect_language(path)
+
+        chunks: list[dict[str, Any]] = []
+        start_word = 0
+
+        while start_word < total_words:
+            end_word = min(start_word + self.chunk_size, total_words)
+
+            start_line = find_line_index_for_word(cumulative_words, start_word)
+            end_line = find_line_index_for_word(cumulative_words, end_word)
+
+            # Snap end boundary to nearest blank line if configured and not final chunk
+            if self.boundary_search_window and end_word < total_words:
+                end_line = snap_boundary_to_blank_line(
+                    lines=lines,
+                    end_line=end_line,
+                    start_line=start_line,
+                    window=self.boundary_search_window,
+                )
+
+            chunk = build_chunk(
+                path=path,
+                lines=lines,
+                start_line=start_line,
+                end_line=end_line,
+                language=detected_lang,
+            )
+            chunks.append(chunk)
+
+            start_word += step
+
+        return chunks
+
+
+def chunk_text(
+    text: str,
+    path: str,
+    chunk_size: int = CHUNK_SIZE,
+    overlap: int = OVERLAP,
+    boundary_window: int = BOUNDARY_SEARCH_WINDOW,
+    language: str | None = None,
+) -> list[dict[str, Any]]:
     """
     Splits a file's text into overlapping chunks, each tagged with the file
     path, language, and the line range it covers.
@@ -87,64 +248,9 @@ def chunk_text(text: str, path: str) -> list[dict]:
     Returns a list of dicts like:
         {"path": "app/models.py", "start_line": 1, "end_line": 42, "text": "...", "language": "python"}
     """
-    lines = text.split("\n")
-
-    # step 1: figure out, for each line, how many words came before it
-    # (a running total) — you'll need this to convert "word N" back into
-    # "line number" when you record start_line/end_line for a chunk.
-    # hint: build a list where cumulative_words[i] = total words in lines[0:i]
-    cumulative_words = []
-    for i, line in enumerate(lines):
-        if i == 0:
-            cumulative_words.append(0)
-        else:
-            cumulative_words.append(cumulative_words[i-1] + len(lines[i-1].split()))
-
-    # sentinel entry: total words in the whole file, including the last line
-    # (cumulative_words would otherwise stop one line short of the true total)
-    cumulative_words.append(cumulative_words[-1] + len(lines[-1].split()))
-    # step 2: walk forward through the text in CHUNK_SIZE-word windows,
-    # stepping by (CHUNK_SIZE - OVERLAP) words each time so consecutive
-    # chunks overlap by OVERLAP words.
-    total_words = cumulative_words[-1]
-    start_word = 0
-    chunks = []
-    while start_word < total_words:
-        end_word = min(start_word + CHUNK_SIZE, total_words)
-
-        # find the line numbers corresponding to start_word and end_word
-        start_line = next(i for i, cw in enumerate(cumulative_words) if cw >= start_word)
-        end_line = next(i for i, cw in enumerate(cumulative_words) if cw >= end_word)
-
-        # snap the chunk's end to the nearest blank line if BOUNDARY_SEARCH_WINDOW is set
-        # search outward from end_line (distance 0, then 1, then 2, ...) so we
-        # actually find the closest blank line, not just the first one in the window
-        # skip snapping on the final chunk (end_word >= total_words) — there's no
-        # next chunk to pick up content that would otherwise get pushed past the cut
-        if BOUNDARY_SEARCH_WINDOW is not None and end_word < total_words:
-            for offset in range(BOUNDARY_SEARCH_WINDOW + 1):
-                before = end_line - offset
-                after = end_line + offset
-                if 0 <= before < len(lines) and before > start_line and lines[before].strip() == "":
-                    end_line = before
-                    break
-                if after < len(lines) and lines[after].strip() == "":
-                    end_line = after
-                    break
-
-        # slice the lines for this chunk and join them back into text
-        chunk_body = "\n".join(lines[start_line:end_line])
-
-        # build the chunk dict and add it to the list
-        chunks.append({
-            "path": path,
-            "start_line": start_line + 1,  # convert to 1-based line numbers
-            "end_line": end_line,
-            "text": chunk_body,
-            "language": detect_language(path),
-        })
-
-        # move to the next chunk window
-        start_word += CHUNK_SIZE - OVERLAP
-
-    return chunks
+    chunker = CodeChunker(
+        chunk_size=chunk_size,
+        overlap=overlap,
+        boundary_search_window=boundary_window,
+    )
+    return chunker.chunk(text, path, language=language)
