@@ -18,6 +18,7 @@ from src.observability.collector import (
     TelemetryCollector,
     get_telemetry_collector,
 )
+from src.observability.prometheus import format_prometheus_metrics
 from src.observability.logging import (
     DEFAULT_DATE_FORMAT,
     DEFAULT_LOG_FORMAT,
@@ -39,6 +40,7 @@ __all__ = [
     "MetricsSummary",
     "TelemetryCollector",
     "get_telemetry_collector",
+    "format_prometheus_metrics",
     "DEFAULT_DATE_FORMAT",
     "DEFAULT_LOG_FORMAT",
     "JsonLogFormatter",

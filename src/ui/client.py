@@ -267,6 +267,32 @@ class ApiClient:
         """
         return self._request("GET", "/metrics")
 
+    def get_prometheus_metrics(self) -> str:
+        """
+        Retrieve system metrics in Prometheus exposition text format.
+        """
+        url = f"{self.base_url}/metrics/prometheus"
+        try:
+            resp = self.session.get(url, timeout=self.timeout)
+        except requests.exceptions.RequestException as exc:
+            raise ApiClientError(f"HTTP request error fetching Prometheus metrics: {exc}", details=str(exc)) from exc
+
+        if resp.status_code >= 400:
+            raise ApiClientError(f"Failed to fetch Prometheus metrics: HTTP {resp.status_code}")
+        return resp.text
+
+    def check_liveness(self) -> dict[str, Any]:
+        """
+        Query the container liveness probe endpoint.
+        """
+        return self._request("GET", "/health/live")
+
+    def check_readiness(self) -> dict[str, Any]:
+        """
+        Query the container readiness probe endpoint for deep subsystem health status.
+        """
+        return self._request("GET", "/health/ready")
+
     def get_recent_queries(self, limit: int = 50) -> list[dict[str, Any]]:
         """
         Retrieve recent query telemetry and profiling records.

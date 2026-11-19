@@ -112,9 +112,16 @@ In the Web UI:
 With the backend running (`python -m src.api.main`):
 
 - **Interactive API Docs:** Visit `http://localhost:8000/docs` (Swagger UI) or `http://localhost:8000/redoc`.
-- **System Health:**
+- **System Health & Orchestration Probes:**
   ```bash
+  # General system status
   curl http://localhost:8000/health
+
+  # Kubernetes liveness probe (200 OK)
+  curl http://localhost:8000/health/live
+
+  # Kubernetes deep readiness probe (200 OK or 503 Service Unavailable)
+  curl http://localhost:8000/health/ready
   ```
 - **Index a Repository:**
   ```bash
@@ -128,9 +135,16 @@ With the backend running (`python -m src.api.main`):
        -H "Content-Type: application/json" \
        -d '{"question": "How is user authentication handled?", "repo": "miguelgrinberg/microblog"}'
   ```
-- **System Metrics & Cost Monitoring:**
+- **System Metrics & Observability:**
   ```bash
+  # JSON metrics summary
   curl http://localhost:8000/metrics
+
+  # Prometheus text exposition format (version 0.0.4)
+  curl http://localhost:8000/metrics/prometheus
+  curl -H "Accept: text/plain" http://localhost:8000/metrics
+
+  # Rolling query execution logs
   curl http://localhost:8000/metrics/queries?limit=10
   ```
 - **Repository Ingestion Audit Log:**
@@ -252,3 +266,34 @@ pytest -v
 # Run integration tests (requires network, PyTorch model, and GEMINI_API_KEY)
 pytest -m integration
 ```
+
+---
+
+## Developer Tooling & Makefile
+
+A `Makefile` is provided to streamline common development tasks:
+
+```bash
+# Display help and available commands
+make help
+
+# Run unit tests
+make test
+
+# Start the FastAPI backend
+make api
+
+# Start the Streamlit UI
+make ui
+
+# Build Docker image
+make docker-build
+
+# Start or stop Docker Compose topology
+make docker-up
+make docker-down
+
+# Clean build artifacts and pycache
+make clean
+```
+

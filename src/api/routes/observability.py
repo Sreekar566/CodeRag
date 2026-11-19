@@ -1,13 +1,15 @@
 """
 Observability and cost monitoring API endpoints.
-Provides system metrics, pipeline latency profiling, token spend, and ingestion audit transparency.
+Provides system metrics, pipeline latency profiling, token spend,
+Prometheus metrics exposition, and ingestion audit transparency.
 """
 from __future__ import annotations
 
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import Any
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
-from src.api.dependencies import get_registry, get_telemetry
+from src.api.dependencies import get_registry, get_storage, get_telemetry
 from src.api.models import (
     DeleteResponse,
     FilteredFileResponse,
@@ -17,21 +19,78 @@ from src.api.models import (
 )
 from src.observability.collector import TelemetryCollector
 from src.observability.models import IngestionAuditLog
+from src.observability.prometheus import format_prometheus_metrics
 from src.registry.registry import RepoRegistry
+from src.storage.base import VectorStore
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Observability"])
 
+PROMETHEUS_MEDIA_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+
+
+def _build_prometheus_response(
+    collector: TelemetryCollector,
+    registry: RepoRegistry,
+    storage: VectorStore,
+) -> Response:
+    """Format and wrap current metrics into Prometheus text response."""
+    summary = collector.get_summary()
+    extra_gauges: dict[str, float | int] = {}
+    try:
+        extra_gauges["coderag_indexed_repos_total"] = len(registry.list_repos())
+    except Exception:
+        pass
+    try:
+        extra_gauges["coderag_collections_total"] = len(storage.list_collections())
+    except Exception:
+        pass
+
+    body = format_prometheus_metrics(summary, extra_gauges=extra_gauges)
+    return Response(content=body, media_type=PROMETHEUS_MEDIA_TYPE)
+
+
+@router.get(
+    "/metrics/prometheus",
+    summary="Get system metrics in Prometheus exposition format",
+    response_class=Response,
+)
+def get_prometheus_metrics(
+    collector: TelemetryCollector = Depends(get_telemetry),
+    registry: RepoRegistry = Depends(get_registry),
+    storage: VectorStore = Depends(get_storage),
+) -> Response:
+    """
+    Returns application performance counters, query latencies, token consumption,
+    and estimated cost in official Prometheus text exposition format (version 0.0.4).
+    """
+    return _build_prometheus_response(collector, registry, storage)
+
 
 @router.get(
     "/metrics",
-    response_model=MetricsSummaryResponse,
     summary="Get aggregated system telemetry, latency percentiles, and LLM cost metrics",
+    responses={
+        200: {
+            "content": {
+                "application/json": {},
+                "text/plain; version=0.0.4; charset=utf-8": {},
+            },
+            "description": "System telemetry summary in JSON or Prometheus text format.",
+        }
+    },
 )
 def get_metrics_summary(
+    request: Request,
+    format: str | None = Query(
+        default=None,
+        description="Response format: 'json' (default) or 'prometheus'",
+    ),
     collector: TelemetryCollector = Depends(get_telemetry),
-) -> MetricsSummaryResponse:
+    registry: RepoRegistry = Depends(get_registry),
+    storage: VectorStore = Depends(get_storage),
+) -> Any:
     """
     Returns aggregated metrics across all serviced queries including:
     - Total queries serviced and error counts
@@ -39,7 +98,24 @@ def get_metrics_summary(
     - Estimated LLM API cost in USD
     - Overall average latency and per-stage timing (retrieval, assembly, generation, citations)
     - p50, p95, and p99 latency percentiles
+
+    Supports Prometheus exposition format when requested via `format=prometheus` query parameter
+    or `Accept: text/plain` header.
     """
+    accept_header = request.headers.get("accept", "")
+    wants_prometheus = (
+        format == "prometheus"
+        or (
+            format is None
+            and "text/plain" in accept_header
+            and "application/json" not in accept_header
+            and "*/*" not in accept_header
+        )
+    )
+
+    if wants_prometheus:
+        return _build_prometheus_response(collector, registry, storage)
+
     summary = collector.get_summary()
     return MetricsSummaryResponse(**summary.to_dict())
 

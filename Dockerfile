@@ -49,6 +49,10 @@ USER appuser
 # Expose FastAPI backend (8000) and Streamlit frontend (8501)
 EXPOSE 8000 8501
 
+# Healthcheck for container runtime
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:${PORT:-8000}/health/live || exit 1
+
 # Configure entrypoint and default command
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["api"]

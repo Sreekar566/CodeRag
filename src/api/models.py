@@ -57,6 +57,26 @@ class HealthResponse(BaseModel):
     collections_count: int = Field(..., description="Number of vector store collections")
 
 
+class LivenessResponse(BaseModel):
+    """Kubernetes and container liveness probe response schema."""
+    status: str = Field(default="alive", description="Liveness status ('alive')")
+    timestamp: str = Field(..., description="Current UTC timestamp")
+
+
+class SubsystemCheck(BaseModel):
+    """Individual subsystem readiness check result."""
+    status: str = Field(..., description="Subsystem health status ('healthy' or 'unhealthy')")
+    details: dict[str, Any] = Field(default_factory=dict, description="Diagnostic details")
+    error: str | None = Field(default=None, description="Error message if unhealthy")
+
+
+class ReadinessResponse(BaseModel):
+    """Kubernetes and container readiness probe response schema."""
+    status: str = Field(..., description="Overall readiness status ('ready' or 'unhealthy')")
+    timestamp: str = Field(..., description="Current UTC timestamp")
+    checks: dict[str, SubsystemCheck] = Field(..., description="Subsystem checks for storage, registry, and persistence")
+
+
 class RepoResponse(BaseModel):
     """Repository metadata response schema."""
     owner: str

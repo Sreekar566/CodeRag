@@ -41,6 +41,10 @@ def test_dockerfile_exists_and_configured() -> None:
         "Dockerfile must expose ports 8000 and 8501"
     )
 
+    # Healthcheck configuration check
+    assert "HEALTHCHECK" in content, "Dockerfile should define container HEALTHCHECK"
+    assert "/health/live" in content or "/health" in content
+
     # Entrypoint and default command
     assert 'ENTRYPOINT ["/app/docker-entrypoint.sh"]' in content
     assert 'CMD ["api"]' in content
@@ -200,3 +204,62 @@ def test_env_path_configuration(tmp_path: Path) -> None:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     assert result.returncode == 0, f"Subprocess failed: {result.stderr}"
+
+
+def test_makefile_developer_tooling_targets() -> None:
+    makefile_path = REPO_ROOT / "Makefile"
+    assert makefile_path.is_file(), "Makefile must exist at repository root"
+
+    content = makefile_path.read_text()
+    expected_targets = [
+        "help:",
+        "install:",
+        "test:",
+        "test-unit:",
+        "test-integration:",
+        "api:",
+        "ui:",
+        "eval:",
+        "docker-build:",
+        "docker-up:",
+        "docker-down:",
+        "clean:",
+        "lint:",
+    ]
+    for target in expected_targets:
+        assert target in content, f"Makefile should define target '{target}'"
+
+    # Test running make help
+    result = subprocess.run(
+        ["make", "-C", str(REPO_ROOT), "help"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "AI Codebase Intelligence Platform" in result.stdout
+    assert "make test" in result.stdout
+
+
+def test_env_example_configuration() -> None:
+    env_example_path = REPO_ROOT / ".env.example"
+    assert env_example_path.is_file(), ".env.example must exist at repository root"
+
+    content = env_example_path.read_text()
+    expected_keys = [
+        "PORT=",
+        "HOST=",
+        "API_BASE_URL=",
+        "LLM_PROVIDER=",
+        "GEMINI_API_KEY=",
+        "GEMINI_MODEL=",
+        "GITHUB_TOKEN=",
+        "CHROMA_PERSIST_DIRECTORY=",
+        "REGISTRY_PATH=",
+        "LOG_LEVEL=",
+        "LOG_FORMAT=",
+        "CHUNK_SIZE=",
+        "CHUNK_OVERLAP=",
+    ]
+    for key in expected_keys:
+        assert key in content, f".env.example should define configuration '{key}'"
+
