@@ -5,6 +5,7 @@ from src.ingestion.chunker import (
     detect_language,
     compute_cumulative_words,
     find_line_index_for_word,
+    find_start_line_index_for_word,
     snap_boundary_to_blank_line,
     build_chunk,
     CHUNK_SIZE,
@@ -194,3 +195,72 @@ def test_chunk_text_custom_parameters():
     )
     assert len(chunks) > 1
     assert chunks[0]["language"] == "typescript"
+
+
+def test_find_start_line_index_for_word():
+    cum = [0, 10, 20, 30, 40]
+    # Word 0 is on line 0
+    assert find_start_line_index_for_word(cum, 0) == 0
+    # Words 1-9 are within line 0 (words 0..9)
+    assert find_start_line_index_for_word(cum, 1) == 0
+    assert find_start_line_index_for_word(cum, 5) == 0
+    assert find_start_line_index_for_word(cum, 9) == 0
+    # Word 10 starts line 1
+    assert find_start_line_index_for_word(cum, 10) == 1
+    assert find_start_line_index_for_word(cum, 19) == 1
+    # Word 20 starts line 2
+    assert find_start_line_index_for_word(cum, 20) == 2
+    assert find_start_line_index_for_word(cum, 39) == 3
+
+
+def test_chunk_text_single_long_line_no_empty_chunks():
+    # Long single-line file (e.g. minified JS, single-line JSON, or data)
+    text = "const data = [" + ", ".join(f"\"item_{i}\"" for i in range(2000)) + "];"
+    chunks = chunk_text(text, "bundle.min.js")
+
+    # Must produce valid non-empty chunks and NEVER emit empty chunks with inverted lines
+    assert len(chunks) >= 1
+    for chunk in chunks:
+        assert chunk["start_line"] >= 1
+        assert chunk["end_line"] >= chunk["start_line"]
+        assert len(chunk["text"].strip()) > 0
+        assert chunk["path"] == "bundle.min.js"
+        assert chunk["language"] == "javascript"
+
+
+def test_chunk_text_retains_line_when_start_word_in_middle():
+    # 3 lines of 10 words each. chunk_size=10, overlap=5
+    # Chunk 2 should start at word 5 (which is in line 1) and end at word 15 (in line 2)
+    # Both lines 1 and 2 must be included in Chunk 2
+    lines = [
+        "w0_1 w0_2 w0_3 w0_4 w0_5 w0_6 w0_7 w0_8 w0_9 w0_10",
+        "w1_1 w1_2 w1_3 w1_4 w1_5 w1_6 w1_7 w1_8 w1_9 w1_10",
+        "w2_1 w2_2 w2_3 w2_4 w2_5 w2_6 w2_7 w2_8 w2_9 w2_10",
+    ]
+    text = "\n".join(lines)
+    chunks = chunk_text(text, "test.py", chunk_size=10, overlap=5, boundary_window=0)
+
+    assert len(chunks) >= 2
+    for chunk in chunks:
+        assert chunk["start_line"] <= chunk["end_line"]
+        assert len(chunk["text"].strip()) > 0
+
+    # Chunk 2 must retain line 1 at its start because word 5 is on line 1
+    assert chunks[1]["start_line"] == 1
+    assert chunks[1]["end_line"] >= 2
+    assert "w0_1" in chunks[1]["text"]
+    assert "w1_1" in chunks[1]["text"]
+
+
+def test_build_chunk_enforces_safe_line_bounds():
+    lines = ["line 1", "line 2", "line 3"]
+    # Normal bounds
+    chunk = build_chunk("test.py", lines, start_line=0, end_line=2)
+    assert chunk["start_line"] == 1
+    assert chunk["end_line"] == 2
+    assert chunk["text"] == "line 1\nline 2"
+
+    # Edge case: start_line >= end_line should not invert or produce empty text
+    inverted = build_chunk("test.py", lines, start_line=2, end_line=1)
+    assert inverted["start_line"] <= inverted["end_line"]
+    assert len(inverted["text"]) > 0

@@ -5,7 +5,7 @@ Snaps boundaries to nearby blank lines and preserves 1-based line range metadata
 from __future__ import annotations
 
 import os
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from typing import Any
 
@@ -108,6 +108,18 @@ def find_line_index_for_word(cumulative_words: list[int], target_word: int) -> i
     return bisect_left(cumulative_words, target_word)
 
 
+def find_start_line_index_for_word(cumulative_words: list[int], target_word: int) -> int:
+    """
+    Find the 0-based line index containing the word at target_word offset.
+    Returns line index i such that cumulative_words[i] <= target_word < cumulative_words[i+1].
+    Runs in O(log L) time.
+    """
+    if target_word <= 0:
+        return 0
+    idx = bisect_right(cumulative_words, target_word) - 1
+    return max(0, idx)
+
+
 def snap_boundary_to_blank_line(
     lines: list[str],
     end_line: int,
@@ -127,7 +139,7 @@ def snap_boundary_to_blank_line(
 
         if 0 <= before < len(lines) and before > start_line and lines[before].strip() == "":
             return before
-        if after < len(lines) and lines[after].strip() == "":
+        if 0 <= after < len(lines) and after > start_line and lines[after].strip() == "":
             return after
 
     return end_line
@@ -143,12 +155,18 @@ def build_chunk(
     """
     Construct a standardized chunk dictionary from line boundaries.
     Converts 0-based start_line index to 1-based start line number.
+    Ensures end_line is at least start_line + 1 to avoid empty slices and inverted line ranges.
     """
-    chunk_body = "\n".join(lines[start_line:end_line])
+    safe_start = max(0, start_line)
+    safe_end = max(safe_start + 1, end_line)
+    if lines:
+        safe_end = min(len(lines), safe_end)
+        safe_start = min(safe_start, safe_end - 1)
+    chunk_body = "\n".join(lines[safe_start:safe_end])
     return {
         "path": path,
-        "start_line": start_line + 1,  # 1-based indexing for citations
-        "end_line": end_line,
+        "start_line": safe_start + 1,  # 1-based indexing for citations
+        "end_line": max(safe_start + 1, safe_end),
         "text": chunk_body,
         "language": language or detect_language(path),
     }
@@ -207,8 +225,11 @@ class CodeChunker:
         while start_word < total_words:
             end_word = min(start_word + self.chunk_size, total_words)
 
-            start_line = find_line_index_for_word(cumulative_words, start_word)
+            start_line = find_start_line_index_for_word(cumulative_words, start_word)
             end_line = find_line_index_for_word(cumulative_words, end_word)
+
+            if end_line <= start_line:
+                end_line = min(len(lines), start_line + 1)
 
             # Snap end boundary to nearest blank line if configured and not final chunk
             if self.boundary_search_window and end_word < total_words:
@@ -218,6 +239,8 @@ class CodeChunker:
                     start_line=start_line,
                     window=self.boundary_search_window,
                 )
+                if end_line <= start_line:
+                    end_line = min(len(lines), start_line + 1)
 
             chunk = build_chunk(
                 path=path,
@@ -226,7 +249,18 @@ class CodeChunker:
                 end_line=end_line,
                 language=detected_lang,
             )
-            chunks.append(chunk)
+
+            # Avoid adding empty chunks or exact duplicates
+            if chunk["text"].strip():
+                if not chunks or (
+                    chunk["start_line"] != chunks[-1]["start_line"]
+                    or chunk["end_line"] != chunks[-1]["end_line"]
+                ):
+                    chunks.append(chunk)
+
+            # If this chunk already covered up to or beyond the end of the file, we are done
+            if end_line >= len(lines):
+                break
 
             start_word += step
 
