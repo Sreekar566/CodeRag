@@ -10,6 +10,10 @@ Usage:
     python -m src.cli index owner/repo --branch main
     python -m src.cli changes owner/repo
     python -m src.cli delete owner/repo --yes
+    python -m src.cli metrics
+    python -m src.cli metrics --prometheus
+    python -m src.cli audit owner/repo
+    python -m src.cli audit owner/repo --markdown
 """
 from __future__ import annotations
 
@@ -491,6 +495,251 @@ def handle_delete(args: argparse.Namespace) -> int:
     return 0
 
 
+def _render_metrics_summary(data: dict[str, Any]) -> int:
+    """Render human-readable system metrics summary."""
+    print("AI Codebase Intelligence - System Metrics")
+    print("=" * 65)
+    total_q = data.get("total_queries", 0)
+    errors = data.get("error_count", 0)
+    uptime_sec = data.get("uptime_seconds", 0.0)
+    uptime_str = f"{uptime_sec:.1f}s"
+    if uptime_sec >= 60:
+        uptime_str += f" ({uptime_sec / 60.0:.1f}m)"
+
+    print(f"Queries Processed:    {total_q} (Errors: {errors})")
+    print(f"Process Uptime:       {uptime_str}")
+    print(f"Prompt Tokens:        {data.get('total_prompt_tokens', 0):,}")
+    print(f"Completion Tokens:    {data.get('total_completion_tokens', 0):,}")
+    print(f"Total Tokens:         {data.get('total_tokens', 0):,}")
+    print(f"Estimated Cost:       ${data.get('total_cost_usd', 0.0):.6f} USD")
+    print("-" * 65)
+    print("Query Latency Percentiles:")
+    print(f"  Average:            {data.get('avg_total_latency_ms', 0.0):.2f}ms")
+    print(f"  p50:                {data.get('p50_latency_ms', 0.0):.2f}ms")
+    print(f"  p95:                {data.get('p95_latency_ms', 0.0):.2f}ms")
+    print(f"  p99:                {data.get('p99_latency_ms', 0.0):.2f}ms")
+    print("-" * 65)
+    stages = data.get("avg_stage_latencies_ms", {})
+    if stages:
+        print("Pipeline Stage Breakdown:")
+        stage_labels = {
+            "retrieval": "Retrieval",
+            "assembly_rerank": "Assembly & Rerank",
+            "generation": "LLM Generation",
+            "citations": "Citation Extraction",
+        }
+        for key, val in stages.items():
+            label = stage_labels.get(key, key.capitalize())
+            print(f"  {label:<20} {val:.2f}ms")
+    return 0
+
+
+def _render_queries_table(queries: list[dict[str, Any]]) -> int:
+    """Render table of recent queries."""
+    if not queries:
+        print("No query telemetry records recorded yet.")
+        return 0
+
+    print(f"Recent Query Telemetry (showing {len(queries)} records)")
+    print("=" * 95)
+    header = f"{'Timestamp':<20} {'Duration':<10} {'Tokens':<8} {'Cost ($)':<12} {'Target Repos':<20} {'Question'}"
+    print(header)
+    print("-" * 95)
+    for q in queries:
+        ts = (q.get("timestamp") or "N/A")[:19]
+        dur = f"{q.get('total_duration_ms', 0.0):.0f}ms"
+        tokens = str(q.get("total_tokens") or 0)
+        cost = f"${q.get('cost_usd', 0.0):.6f}"
+        repos = ",".join(q.get("target_repos", [])) or "all"
+        if len(repos) > 18:
+            repos = repos[:15] + "..."
+        question = q.get("question", "")
+        if len(question) > 35:
+            question = question[:32] + "..."
+        print(f"{ts:<20} {dur:<10} {tokens:<8} {cost:<12} {repos:<20} {question}")
+    print("-" * 95)
+    return 0
+
+
+def handle_metrics(args: argparse.Namespace) -> int:
+    """Inspect and display system telemetry, latency profiling, token spend, or Prometheus metrics."""
+    if args.api_url:
+        from src.ui.client import ApiClient, ApiClientError
+
+        client = ApiClient(base_url=args.api_url)
+        try:
+            if args.reset:
+                client.reset_metrics()
+                print("Telemetry metrics and query logs reset successfully.")
+                return 0
+            if args.prometheus:
+                prom_text = client.get_prometheus_metrics()
+                print(prom_text, end="")
+                return 0
+            if args.queries:
+                queries = client.get_recent_queries(limit=args.limit)
+                if args.json:
+                    print(json.dumps(queries, indent=2))
+                    return 0
+                return _render_queries_table(queries)
+            metrics_data = client.get_metrics()
+        except ApiClientError as exc:
+            print(f"Error fetching metrics from API at {args.api_url}: {exc}", file=sys.stderr)
+            return 1
+    else:
+        from src.observability.collector import get_telemetry_collector
+
+        collector = get_telemetry_collector()
+        if args.reset:
+            collector.clear()
+            print("Telemetry metrics and query logs reset successfully.")
+            return 0
+        if args.prometheus:
+            from src.observability.prometheus import format_prometheus_metrics
+            from src.registry.registry import get_repo_registry
+            from src.storage.chroma_store import get_vector_store
+
+            registry = get_repo_registry()
+            storage = get_vector_store()
+            extra_gauges: dict[str, float | int] = {}
+            try:
+                extra_gauges["coderag_indexed_repos_total"] = len(registry.list_repos())
+            except Exception:
+                pass
+            try:
+                extra_gauges["coderag_collections_total"] = len(storage.list_collections())
+            except Exception:
+                pass
+            prom_text = format_prometheus_metrics(collector.get_summary(), extra_gauges=extra_gauges)
+            print(prom_text, end="")
+            return 0
+        if args.queries:
+            queries = collector.get_recent_queries(limit=args.limit)
+            queries_data = [q.to_dict() for q in queries]
+            if args.json:
+                print(json.dumps(queries_data, indent=2))
+                return 0
+            return _render_queries_table(queries_data)
+        summary = collector.get_summary()
+        metrics_data = summary.to_dict()
+
+    if args.json:
+        print(json.dumps(metrics_data, indent=2))
+        return 0
+
+    return _render_metrics_summary(metrics_data)
+
+
+def handle_audit(args: argparse.Namespace) -> int:
+    """Inspect file-filtering transparency audit log for an indexed repository."""
+    try:
+        owner, repo = parse_repo_arg(args.repo)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    repo_id = f"{owner}/{repo}"
+
+    if args.api_url:
+        from src.ui.client import ApiClient, ApiClientError
+
+        client = ApiClient(base_url=args.api_url)
+        try:
+            audit_data = client.get_repo_audit(owner, repo)
+        except ApiClientError as exc:
+            print(f"Error fetching audit log from API at {args.api_url}: {exc}", file=sys.stderr)
+            return 1
+    else:
+        from src.observability.collector import get_telemetry_collector
+        from src.observability.models import IngestionAuditLog
+        from src.registry.registry import get_repo_registry
+
+        collector = get_telemetry_collector()
+        audit = collector.get_audit(repo_id)
+
+        if audit is None:
+            registry = get_repo_registry()
+            meta = registry.get(owner, repo)
+            if meta is None:
+                print(
+                    f"Error: Repository '{repo_id}' is not registered or indexed.",
+                    file=sys.stderr,
+                )
+                return 1
+
+            audit_dict = meta.metadata.get("audit_log") if meta.metadata else None
+            if audit_dict:
+                audit = IngestionAuditLog.from_dict(audit_dict)
+            else:
+                audit = IngestionAuditLog(
+                    repo_id=repo_id,
+                    branch=meta.branch,
+                    commit_sha=meta.commit_sha,
+                    total_scanned=meta.file_count,
+                    total_kept=meta.file_count,
+                    total_filtered=0,
+                    reason_counts={},
+                    kept_files=[],
+                    filtered_files=[],
+                )
+        audit_data = audit.to_dict()
+
+    if args.json:
+        print(json.dumps(audit_data, indent=2))
+        return 0
+
+    if args.markdown:
+        from src.observability.models import IngestionAuditLog
+
+        audit_obj = IngestionAuditLog.from_dict(audit_data)
+        print(audit_obj.to_markdown_summary())
+        return 0
+
+    print(f"Ingestion Transparency Audit: {repo_id}")
+    print("=" * 75)
+    print(f"Branch:               {audit_data.get('branch', 'main')}")
+    print(f"Commit SHA:           {audit_data.get('commit_sha') or 'N/A'}")
+    print(f"Evaluated At:         {audit_data.get('timestamp', 'N/A')}")
+    print(f"Total Files Scanned:  {audit_data.get('total_scanned', 0)}")
+    print(f"Files Kept (Indexed): {audit_data.get('total_kept', 0)}")
+    print(f"Files Filtered Out:   {audit_data.get('total_filtered', 0)}")
+    print("-" * 75)
+
+    reasons = audit_data.get("reason_counts", {})
+    if reasons:
+        print("Filter Reasons Breakdown:")
+        for r_name, r_count in sorted(reasons.items(), key=lambda x: -x[1]):
+            print(f"  - {r_name:<24} {r_count} files")
+        print("-" * 75)
+
+    filtered_files = audit_data.get("filtered_files", [])
+    if filtered_files:
+        limit = args.limit or 20
+        shown = filtered_files[:limit]
+        print(f"Filtered Files Sample (showing {len(shown)} of {len(filtered_files)}):")
+        header = f"{'Path':<40} {'Reason':<20} {'Rule Match':<15}"
+        print(header)
+        print("-" * 75)
+        for f in shown:
+            p = f.get("path", "")
+            if len(p) > 38:
+                p = "..." + p[-35:]
+            r = f.get("reason", "")
+            m = f.get("rule_match", "")
+            print(f"{p:<40} {r:<20} {m:<15}")
+        print("-" * 75)
+
+    if args.show_kept:
+        kept = audit_data.get("kept_files", [])
+        print(f"Kept Files ({len(kept)} files):")
+        print("-" * 75)
+        for f in kept:
+            print(f"  + {f}")
+        print("-" * 75)
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build and configure the CLI argument parser."""
     parser = argparse.ArgumentParser(
@@ -604,6 +853,58 @@ def build_parser() -> argparse.ArgumentParser:
     p_delete.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
     p_delete.add_argument("--json", action="store_true", help="Output deletion result as JSON")
 
+    # metrics
+    p_metrics = subparsers.add_parser(
+        "metrics",
+        help="Inspect system metrics, latency percentiles, token spend, or Prometheus format",
+    )
+    p_metrics.add_argument(
+        "--prometheus",
+        action="store_true",
+        help="Export metrics in official Prometheus exposition format",
+    )
+    p_metrics.add_argument(
+        "--queries",
+        action="store_true",
+        help="List rolling recent query telemetry records",
+    )
+    p_metrics.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Maximum recent query telemetry records to return",
+    )
+    p_metrics.add_argument(
+        "--reset",
+        action="store_true",
+        help="Reset in-memory telemetry records and query logs",
+    )
+    p_metrics.add_argument("--json", action="store_true", help="Output metrics as JSON")
+
+    # audit
+    p_audit = subparsers.add_parser(
+        "audit",
+        help="Inspect file-filtering transparency audit log for an indexed repository",
+    )
+    p_audit.add_argument("repo", help="Target repository (owner/repo)")
+    p_audit.add_argument(
+        "--show-kept",
+        action="store_true",
+        help="Display list of files retained for indexing",
+    )
+    p_audit.add_argument(
+        "--markdown",
+        action="store_true",
+        help="Output audit report in GitHub Flavored Markdown",
+    )
+    p_audit.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Maximum filtered files to display in sample table",
+    )
+    p_audit.add_argument("--json", action="store_true", help="Output audit report as JSON")
+
     return parser
 
 
@@ -627,6 +928,8 @@ def main(argv: list[str] | None = None) -> int:
         "index": handle_index,
         "changes": handle_changes,
         "delete": handle_delete,
+        "metrics": handle_metrics,
+        "audit": handle_audit,
     }
 
     handler = handlers.get(args.subcommand)

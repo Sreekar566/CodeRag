@@ -1,5 +1,5 @@
 # AI Codebase Intelligence Platform - Developer Tooling Makefile
-.PHONY: help install test test-unit test-integration api ui eval cli docker-build docker-up docker-down clean lint
+.PHONY: help install test test-unit test-integration api ui eval cli metrics audit docker-build docker-up docker-down clean lint
 
 PYTHON ?= python3
 PIP ?= pip
@@ -19,6 +19,8 @@ help:
 	@echo "  make ui                 Launch Streamlit frontend UI (port 8501)"
 	@echo "  make eval               Run benchmark evaluation on sample repository"
 	@echo "  make cli ARGS=\"...\"    Run developer CLI tool (e.g. ARGS=\"status\" or ARGS=\"repos\")"
+	@echo "  make metrics ARGS=\"...\" Run metrics/telemetry CLI (e.g. ARGS=\"--prometheus\" or ARGS=\"--json\")"
+	@echo "  make audit ARGS=\"...\"   Inspect ingestion audit log (e.g. ARGS=\"owner/repo\")"
 	@echo "  make docker-build       Build production Docker container image"
 	@echo "  make docker-up          Launch container topology with docker-compose"
 	@echo "  make docker-down        Stop docker-compose containers"
@@ -50,6 +52,12 @@ eval:
 
 cli:
 	$(PYTHON) -m src.cli.main $(ARGS)
+
+metrics:
+	$(PYTHON) -m src.cli.main metrics $(ARGS)
+
+audit:
+	$(PYTHON) -m src.cli.main audit $(ARGS)
 
 docker-build:
 	docker build -t ai-codebase-intel:latest .

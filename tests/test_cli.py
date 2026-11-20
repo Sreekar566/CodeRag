@@ -51,6 +51,8 @@ def test_cli_help(capsys: pytest.CaptureFixture) -> None:
     assert "index" in captured.out
     assert "changes" in captured.out
     assert "delete" in captured.out
+    assert "metrics" in captured.out
+    assert "audit" in captured.out
 
 
 def test_cli_no_subcommand(capsys: pytest.CaptureFixture) -> None:
@@ -489,3 +491,445 @@ def test_cli_module_help() -> None:
         check=True,
     )
     assert "AI Codebase Intelligence Platform - Developer CLI" in result.stdout
+
+
+# ============================================================================
+# Metrics Command Tests
+# ============================================================================
+
+
+def test_cli_metrics_local_empty(capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+
+    collector = get_telemetry_collector()
+    collector.clear()
+
+    code = main(["metrics"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "AI Codebase Intelligence - System Metrics" in captured.out
+    assert "Queries Processed:    0 (Errors: 0)" in captured.out
+    assert "Prompt Tokens:        0" in captured.out
+
+
+def test_cli_metrics_local_with_data(capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+    from src.observability.models import QueryTelemetry
+
+    collector = get_telemetry_collector()
+    collector.clear()
+    collector.record_query(
+        QueryTelemetry(
+            question="How does login work?",
+            target_repos=["octocat/repo"],
+            model="gemini-3.8-flash",
+            total_duration_ms=250.0,
+            prompt_tokens=300,
+            completion_tokens=80,
+            total_tokens=380,
+            cost_usd=0.000093,
+            stage_latencies_ms={"retrieval": 40.0, "generation": 200.0},
+        )
+    )
+
+    code = main(["metrics"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Queries Processed:    1 (Errors: 0)" in captured.out
+    assert "Prompt Tokens:        300" in captured.out
+    assert "Total Tokens:         380" in captured.out
+    assert "Retrieval" in captured.out
+
+
+def test_cli_metrics_json(capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+
+    collector = get_telemetry_collector()
+    collector.clear()
+
+    code = main(["metrics", "--json"])
+    assert code == 0
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert "total_queries" in data
+    assert "uptime_seconds" in data
+    assert "avg_total_latency_ms" in data
+
+
+def test_cli_metrics_prometheus(capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+
+    collector = get_telemetry_collector()
+    collector.clear()
+
+    code = main(["metrics", "--prometheus"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "# HELP coderag_queries_total" in captured.out
+    assert "# TYPE coderag_queries_total counter" in captured.out
+    assert "coderag_queries_total 0" in captured.out
+    assert "coderag_uptime_seconds" in captured.out
+
+
+def test_cli_metrics_reset(capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+    from src.observability.models import QueryTelemetry
+
+    collector = get_telemetry_collector()
+    collector.record_query(QueryTelemetry(question="test"))
+    assert len(collector.get_recent_queries()) > 0
+
+    code = main(["metrics", "--reset"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Telemetry metrics and query logs reset successfully." in captured.out
+    assert len(collector.get_recent_queries()) == 0
+
+
+def test_cli_metrics_queries_empty(capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+
+    collector = get_telemetry_collector()
+    collector.clear()
+
+    code = main(["metrics", "--queries"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "No query telemetry records recorded yet." in captured.out
+
+
+def test_cli_metrics_queries_with_data(capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+    from src.observability.models import QueryTelemetry
+
+    collector = get_telemetry_collector()
+    collector.clear()
+    collector.record_query(
+        QueryTelemetry(
+            question="What is the app architecture?",
+            target_repos=["foo/bar"],
+            total_duration_ms=185.0,
+            total_tokens=220,
+            cost_usd=0.00005,
+        )
+    )
+
+    code = main(["metrics", "--queries"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Recent Query Telemetry (showing 1 records)" in captured.out
+    assert "foo/bar" in captured.out
+    assert "What is the app architecture?" in captured.out
+
+
+def test_cli_metrics_queries_json(capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+    from src.observability.models import QueryTelemetry
+
+    collector = get_telemetry_collector()
+    collector.clear()
+    collector.record_query(QueryTelemetry(question="test query"))
+
+    code = main(["metrics", "--queries", "--json"])
+    assert code == 0
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["question"] == "test query"
+
+
+@patch("src.ui.client.ApiClient.get_metrics")
+def test_cli_metrics_remote(mock_metrics: MagicMock, capsys: pytest.CaptureFixture) -> None:
+    mock_metrics.return_value = {
+        "total_queries": 42,
+        "total_prompt_tokens": 1000,
+        "total_completion_tokens": 200,
+        "total_tokens": 1200,
+        "total_cost_usd": 0.0005,
+        "avg_total_latency_ms": 310.2,
+        "p50_latency_ms": 290.0,
+        "p95_latency_ms": 450.0,
+        "p99_latency_ms": 520.0,
+        "error_count": 1,
+        "uptime_seconds": 120.0,
+        "avg_stage_latencies_ms": {"retrieval": 50.0, "generation": 250.0},
+    }
+
+    code = main(["--api-url", "http://localhost:8000", "metrics"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Queries Processed:    42 (Errors: 1)" in captured.out
+    assert "Total Tokens:         1,200" in captured.out
+    assert "Retrieval" in captured.out
+
+
+@patch("src.ui.client.ApiClient.get_prometheus_metrics")
+def test_cli_metrics_remote_prometheus(mock_prom: MagicMock, capsys: pytest.CaptureFixture) -> None:
+    mock_prom.return_value = "coderag_queries_total 10\n"
+
+    code = main(["--api-url", "http://localhost:8000", "metrics", "--prometheus"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "coderag_queries_total 10" in captured.out
+
+
+@patch("src.ui.client.ApiClient.get_recent_queries")
+def test_cli_metrics_remote_queries(mock_queries: MagicMock, capsys: pytest.CaptureFixture) -> None:
+    mock_queries.return_value = [
+        {
+            "timestamp": "2026-11-20T12:00:00Z",
+            "total_duration_ms": 150.0,
+            "total_tokens": 300,
+            "cost_usd": 0.00007,
+            "target_repos": ["pallets/flask"],
+            "question": "How to register blueprints?",
+        }
+    ]
+
+    code = main(["--api-url", "http://localhost:8000", "metrics", "--queries"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "pallets/flask" in captured.out
+    assert "How to register blueprints?" in captured.out
+
+
+@patch("src.ui.client.ApiClient.reset_metrics")
+def test_cli_metrics_remote_reset(mock_reset: MagicMock, capsys: pytest.CaptureFixture) -> None:
+    mock_reset.return_value = {"success": True}
+
+    code = main(["--api-url", "http://localhost:8000", "metrics", "--reset"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Telemetry metrics and query logs reset successfully." in captured.out
+
+
+@patch("src.ui.client.ApiClient.get_metrics", side_effect=ApiClientError("HTTP 503"))
+def test_cli_metrics_remote_error(mock_metrics: MagicMock, capsys: pytest.CaptureFixture) -> None:
+    code = main(["--api-url", "http://localhost:8000", "metrics"])
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "Error fetching metrics from API" in captured.err
+
+
+# ============================================================================
+# Audit Command Tests
+# ============================================================================
+
+
+def test_cli_audit_invalid_repo(capsys: pytest.CaptureFixture) -> None:
+    code = main(["audit", "invalid_name"])
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "Error: Invalid repository format" in captured.err
+
+
+def test_cli_audit_local_not_found(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+
+    collector = get_telemetry_collector()
+    collector.clear()
+
+    reg_file = tmp_path / "reg.json"
+    reg = RepoRegistry(storage_path=str(reg_file))
+    monkeypatch.setattr("src.registry.registry.get_repo_registry", lambda: reg)
+
+    code = main(["audit", "nonexistent/repo"])
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "Error: Repository 'nonexistent/repo' is not registered or indexed." in captured.err
+
+
+def test_cli_audit_local_with_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+
+    collector = get_telemetry_collector()
+    collector.clear()
+
+    reg_file = tmp_path / "reg.json"
+    reg = RepoRegistry(storage_path=str(reg_file))
+    reg.register(
+        RepositoryMetadata(
+            owner="audit",
+            repo="test",
+            collection_name="audit_test",
+            branch="main",
+            commit_sha="c0ffee123",
+            file_count=20,
+            chunk_count=60,
+            status="ready",
+            metadata={
+                "audit_log": {
+                    "repo_id": "audit/test",
+                    "branch": "main",
+                    "commit_sha": "c0ffee123",
+                    "timestamp": "2026-11-20T10:00:00Z",
+                    "total_scanned": 25,
+                    "total_kept": 20,
+                    "total_filtered": 5,
+                    "reason_counts": {"noise_directory": 3, "file_too_large": 2},
+                    "kept_files": ["app.py"],
+                    "filtered_files": [
+                        {
+                            "path": "tests/temp.dat",
+                            "reason": "noise_directory",
+                            "rule_match": "tests",
+                            "size_bytes": 1024,
+                        }
+                    ],
+                }
+            },
+        )
+    )
+    monkeypatch.setattr("src.registry.registry.get_repo_registry", lambda: reg)
+
+    code = main(["audit", "audit/test"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Ingestion Transparency Audit: audit/test" in captured.out
+    assert "Total Files Scanned:  25" in captured.out
+    assert "Files Kept (Indexed): 20" in captured.out
+    assert "Files Filtered Out:   5" in captured.out
+    assert "noise_directory" in captured.out
+    assert "tests/temp.dat" in captured.out
+
+
+def test_cli_audit_local_with_collector(capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+    from src.observability.models import FilteredFileRecord, IngestionAuditLog
+
+    collector = get_telemetry_collector()
+    collector.clear()
+    collector.record_audit(
+        IngestionAuditLog(
+            repo_id="collector/test",
+            branch="master",
+            commit_sha="abcdef",
+            total_scanned=10,
+            total_kept=8,
+            total_filtered=2,
+            reason_counts={"noise_extension": 2},
+            kept_files=["main.py", "utils.py"],
+            filtered_files=[
+                FilteredFileRecord(path="logo.png", reason="noise_extension", rule_match=".png", size_bytes=5000)
+            ],
+        )
+    )
+
+    code = main(["audit", "collector/test"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Ingestion Transparency Audit: collector/test" in captured.out
+    assert "logo.png" in captured.out
+
+
+def test_cli_audit_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+
+    collector = get_telemetry_collector()
+    collector.clear()
+
+    reg_file = tmp_path / "reg.json"
+    reg = RepoRegistry(storage_path=str(reg_file))
+    reg.register(
+        RepositoryMetadata(
+            owner="json",
+            repo="audit",
+            collection_name="json_audit",
+            file_count=10,
+            chunk_count=30,
+            status="ready",
+        )
+    )
+    monkeypatch.setattr("src.registry.registry.get_repo_registry", lambda: reg)
+
+    code = main(["audit", "json/audit", "--json"])
+    assert code == 0
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert data["repo_id"] == "json/audit"
+    assert "total_scanned" in data
+    assert "filtered_files" in data
+
+
+def test_cli_audit_markdown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+
+    collector = get_telemetry_collector()
+    collector.clear()
+
+    reg_file = tmp_path / "reg.json"
+    reg = RepoRegistry(storage_path=str(reg_file))
+    reg.register(
+        RepositoryMetadata(
+            owner="md",
+            repo="report",
+            collection_name="md_report",
+            file_count=5,
+            chunk_count=15,
+            status="ready",
+        )
+    )
+    monkeypatch.setattr("src.registry.registry.get_repo_registry", lambda: reg)
+
+    code = main(["audit", "md/report", "--markdown"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "### Ingestion Transparency Audit: `md/report`" in captured.out
+
+
+def test_cli_audit_show_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    from src.observability.collector import get_telemetry_collector
+    from src.observability.models import IngestionAuditLog
+
+    collector = get_telemetry_collector()
+    collector.clear()
+    collector.record_audit(
+        IngestionAuditLog(
+            repo_id="kept/repo",
+            kept_files=["src/app.py", "src/models.py"],
+            total_scanned=2,
+            total_kept=2,
+            total_filtered=0,
+        )
+    )
+
+    code = main(["audit", "kept/repo", "--show-kept"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Kept Files (2 files):" in captured.out
+    assert "+ src/app.py" in captured.out
+    assert "+ src/models.py" in captured.out
+
+
+@patch("src.ui.client.ApiClient.get_repo_audit")
+def test_cli_audit_remote(mock_audit: MagicMock, capsys: pytest.CaptureFixture) -> None:
+    mock_audit.return_value = {
+        "repo_id": "remote/audit",
+        "branch": "main",
+        "commit_sha": "999999",
+        "timestamp": "2026-11-20T14:00:00Z",
+        "total_scanned": 50,
+        "total_kept": 45,
+        "total_filtered": 5,
+        "reason_counts": {"noise_directory": 5},
+        "filtered_files": [
+            {"path": "docs/_build/index.html", "reason": "noise_directory", "rule_match": "_build", "size_bytes": 2048}
+        ],
+        "kept_files": [],
+    }
+
+    code = main(["--api-url", "http://localhost:8000", "audit", "remote/audit"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Ingestion Transparency Audit: remote/audit" in captured.out
+    assert "Total Files Scanned:  50" in captured.out
+    assert "docs/_build/index.html" in captured.out
+
+
+@patch("src.ui.client.ApiClient.get_repo_audit", side_effect=ApiClientError("404 Not Found"))
+def test_cli_audit_remote_error(mock_audit: MagicMock, capsys: pytest.CaptureFixture) -> None:
+    code = main(["--api-url", "http://localhost:8000", "audit", "remote/audit"])
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "Error fetching audit log from API" in captured.err

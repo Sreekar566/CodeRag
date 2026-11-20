@@ -312,8 +312,19 @@ python -m src.cli changes miguelgrinberg/microblog
 # Delete a repository and purge its vector collection
 python -m src.cli delete miguelgrinberg/microblog --yes
 
+# Inspect system performance, query latencies, token consumption, and estimated cost
+python -m src.cli metrics
+python -m src.cli metrics --prometheus
+python -m src.cli metrics --queries --limit 10
+
+# Inspect file-filtering transparency audit log for indexed codebase
+python -m src.cli audit miguelgrinberg/microblog
+python -m src.cli audit miguelgrinberg/microblog --markdown
+python -m src.cli audit miguelgrinberg/microblog --show-kept
+
 # Execute commands against a running API server
 python -m src.cli --api-url http://localhost:8000 status
+python -m src.cli --api-url http://localhost:8000 metrics
 ```
 
 ### Makefile Automation
@@ -328,6 +339,8 @@ make help
 make cli ARGS="status"
 make cli ARGS="repos"
 make cli ARGS="query 'What is the user model?' --llm fake"
+make metrics ARGS="--prometheus"
+make audit ARGS="miguelgrinberg/microblog"
 
 # Run Python syntax and bytecode compilation verification
 make lint

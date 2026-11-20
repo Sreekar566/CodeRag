@@ -44,6 +44,14 @@ jobs:
         run: |
           pytest -v
 
+      - name: Verify Developer CLI Tooling
+        env:
+          LLM_PROVIDER: fake
+        run: |
+          python -m src.cli --help
+          python -m src.cli status
+          python -m src.cli metrics
+
   docker-validate:
     name: Docker & Compose Validation
     runs-on: ubuntu-latest
