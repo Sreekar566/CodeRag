@@ -5,21 +5,22 @@ Powered by Pydantic Settings (BaseSettings) and dotenv support.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-VALID_LOG_FORMATS = {"text", "json"}
-VALID_LLM_PROVIDERS = {"gemini", "fake"}
+VALID_LOG_LEVELS: set[str] = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+VALID_LOG_FORMATS: set[str] = {"text", "json"}
+VALID_LLM_PROVIDERS: set[str] = {"gemini", "fake"}
 
 
 class Settings(BaseSettings):
     """
     Application-wide configuration settings with environment variable resolution,
-    strict type validation, and sensible defaults.
+    strict type validation, normalization, and sensible defaults.
     """
-    model_config = SettingsConfigDict(
+    model_config: SettingsConfigDict = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -161,6 +162,14 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # Field Validators
     # -------------------------------------------------------------------------
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("host cannot be empty or whitespace")
+        return cleaned
+
     @field_validator("port")
     @classmethod
     def validate_port(cls, v: int) -> int:
@@ -174,6 +183,92 @@ class Settings(BaseSettings):
         if v < 1:
             raise ValueError(f"Workers must be at least 1, got {v}")
         return v
+
+    @field_validator("api_base_url")
+    @classmethod
+    def validate_api_base_url(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not (cleaned.startswith("http://") or cleaned.startswith("https://")):
+            raise ValueError(
+                f"Invalid api_base_url '{v}'. Must start with 'http://' or 'https://'"
+            )
+        return cleaned
+
+    @field_validator("chroma_persist_directory")
+    @classmethod
+    def validate_chroma_persist_directory(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("chroma_persist_directory cannot be empty or whitespace")
+        return cleaned
+
+    @field_validator("registry_path")
+    @classmethod
+    def validate_registry_path(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("registry_path cannot be empty or whitespace")
+        if not cleaned.lower().endswith(".json"):
+            raise ValueError(
+                f"registry_path must have a .json file extension, got '{v}'"
+            )
+        return cleaned
+
+    @field_validator("default_collection_name")
+    @classmethod
+    def validate_default_collection_name(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("default_collection_name cannot be empty or whitespace")
+        if not (3 <= len(cleaned) <= 63):
+            raise ValueError(
+                f"default_collection_name length must be between 3 and 63 characters, got {len(cleaned)}"
+            )
+        if not re.match(r"^[a-zA-Z0-9_-]+$", cleaned):
+            raise ValueError(
+                f"default_collection_name '{v}' contains invalid characters. Must be alphanumeric, underscores, or hyphens."
+            )
+        return cleaned
+
+    @field_validator("llm_provider")
+    @classmethod
+    def validate_llm_provider(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        normalized = v.lower().strip()
+        if not normalized:
+            return None
+        if normalized not in VALID_LLM_PROVIDERS:
+            raise ValueError(
+                f"Unsupported LLM provider: '{v}'. Supported providers are: {', '.join(sorted(VALID_LLM_PROVIDERS))}"
+            )
+        return normalized
+
+    @field_validator("gemini_api_key", "github_token")
+    @classmethod
+    def validate_credentials(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned if cleaned else None
+
+    @field_validator("gemini_model")
+    @classmethod
+    def validate_gemini_model(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("gemini_model cannot be empty or whitespace")
+        return cleaned
+
+    @field_validator("github_api_base")
+    @classmethod
+    def validate_github_api_base(cls, v: str) -> str:
+        cleaned = v.strip().rstrip("/")
+        if not (cleaned.startswith("http://") or cleaned.startswith("https://")):
+            raise ValueError(
+                f"Invalid github_api_base '{v}'. Must start with 'http://' or 'https://'"
+            )
+        return cleaned
 
     @field_validator("log_level")
     @classmethod
@@ -192,18 +287,6 @@ class Settings(BaseSettings):
         if normalized not in VALID_LOG_FORMATS:
             raise ValueError(
                 f"Invalid log_format '{v}'. Must be one of: {', '.join(sorted(VALID_LOG_FORMATS))}"
-            )
-        return normalized
-
-    @field_validator("llm_provider")
-    @classmethod
-    def validate_llm_provider(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        normalized = v.lower().strip()
-        if normalized not in VALID_LLM_PROVIDERS:
-            raise ValueError(
-                f"Unsupported LLM provider: '{v}'. Supported providers are: {', '.join(sorted(VALID_LLM_PROVIDERS))}"
             )
         return normalized
 
@@ -251,7 +334,7 @@ class Settings(BaseSettings):
         return self
 
     # -------------------------------------------------------------------------
-    # Helper Properties
+    # Helper Properties and Methods
     # -------------------------------------------------------------------------
     @property
     def effective_llm_provider(self) -> str:
@@ -261,7 +344,7 @@ class Settings(BaseSettings):
         2. 'gemini' if gemini_api_key is set
         3. 'fake' as offline/testing default fallback
         """
-        if self.llm_provider:
+        if self.llm_provider and self.llm_provider.strip():
             return self.llm_provider.lower().strip()
         if self.gemini_api_key and self.gemini_api_key.strip():
             return "gemini"
@@ -276,6 +359,26 @@ class Settings(BaseSettings):
     def is_github_token_available(self) -> bool:
         """Check if a GitHub personal access token is configured."""
         return bool(self.github_token and self.github_token.strip())
+
+    @property
+    def is_local_storage(self) -> bool:
+        """Check if Chroma is configured for local persistent disk storage."""
+        return bool(self.chroma_persist_directory and self.chroma_persist_directory.strip())
+
+    def to_masked_dict(self) -> dict[str, Any]:
+        """
+        Export configuration as a dictionary with sensitive credentials masked
+        for safe logging, inspection, and telemetry reporting.
+        """
+        data = self.model_dump()
+        for secret_key in ("gemini_api_key", "github_token"):
+            val = data.get(secret_key)
+            if val and isinstance(val, str):
+                if len(val) > 6:
+                    data[secret_key] = f"{val[:3]}...{val[-2:]}"
+                else:
+                    data[secret_key] = "***"
+        return data
 
 
 def get_settings() -> Settings:
