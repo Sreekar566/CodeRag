@@ -34,6 +34,10 @@ jobs:
         run: |
           pip install -r requirements.txt
 
+      - name: Lint and Code Syntax Verification
+        run: |
+          python -m compileall src tests
+
       - name: Run Test Suite
         env:
           LLM_PROVIDER: fake

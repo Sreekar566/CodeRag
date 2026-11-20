@@ -20,6 +20,11 @@ case "$1" in
         echo "Running evaluation suite..."
         exec python -m src.evaluation.main "$@"
         ;;
+    cli)
+        shift
+        echo "Running developer CLI tool..."
+        exec python -m src.cli.main "$@"
+        ;;
     test)
         shift
         echo "Running test suite..."

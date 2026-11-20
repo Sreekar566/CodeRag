@@ -218,6 +218,10 @@ The platform is fully containerized with CPU-only PyTorch and multi-service topo
    docker run -d --name codebase-ui -p 8501:8501 \
      -e API_BASE_URL="http://localhost:8000" \
      ai-codebase-intel:latest ui
+
+   # Run Developer CLI inside container
+   docker run --rm -v $(pwd)/data:/app/data \
+     ai-codebase-intel:latest cli status
    ```
 
 ---
@@ -269,13 +273,64 @@ pytest -m integration
 
 ---
 
-## Developer Tooling & Makefile
+## Developer Tooling & CLI
+
+A comprehensive Developer CLI (`src.cli`) and `Makefile` are provided to streamline local development, terminal queries, codebase indexing, and container operations:
+
+### Developer CLI (`python -m src.cli`)
+
+The CLI operates in two modes:
+1. **Standalone Local Mode (Default):** Runs directly against the local Chroma vector store and JSON repository registry without requiring a running web server.
+2. **Remote Client Mode (`--api-url`):** Connects to a running FastAPI backend server (local or deployed).
+
+```bash
+# Display CLI help and available commands
+python -m src.cli --help
+
+# Inspect platform status, vector collections, and LLM configuration
+python -m src.cli status
+python -m src.cli status --json
+
+# List registered and indexed codebases
+python -m src.cli repos
+python -m src.cli repos --json
+
+# Query indexed codebase with grounded citations and latency profiling
+python -m src.cli query "Where is authentication handled?" --repo miguelgrinberg/microblog
+python -m src.cli query "Explain database migrations" --llm fake --json
+
+# Cross-repo query across multiple codebases
+python -m src.cli query "Compare routing mechanisms" --repos "pallets/flask,miguelgrinberg/microblog"
+
+# Index a GitHub repository (incremental Merkle tree diffing enabled by default)
+python -m src.cli index miguelgrinberg/microblog --branch main
+python -m src.cli index pallets/flask --force
+
+# Preview pending remote Git changes without reindexing
+python -m src.cli changes miguelgrinberg/microblog
+
+# Delete a repository and purge its vector collection
+python -m src.cli delete miguelgrinberg/microblog --yes
+
+# Execute commands against a running API server
+python -m src.cli --api-url http://localhost:8000 status
+```
+
+### Makefile Automation
 
 A `Makefile` is provided to streamline common development tasks:
 
 ```bash
 # Display help and available commands
 make help
+
+# Run developer CLI commands
+make cli ARGS="status"
+make cli ARGS="repos"
+make cli ARGS="query 'What is the user model?' --llm fake"
+
+# Run Python syntax and bytecode compilation verification
+make lint
 
 # Run unit tests
 make test

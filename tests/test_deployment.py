@@ -79,6 +79,7 @@ def test_docker_entrypoint_executable_and_handlers() -> None:
     assert "api)" in content, "Entrypoint must support 'api' command"
     assert "ui)" in content, "Entrypoint must support 'ui' command"
     assert "eval)" in content, "Entrypoint must support 'eval' command"
+    assert "cli)" in content, "Entrypoint must support 'cli' command"
     assert "test)" in content, "Entrypoint must support 'test' command"
 
     # Test executing entrypoint with pass-through command
@@ -220,6 +221,7 @@ def test_makefile_developer_tooling_targets() -> None:
         "api:",
         "ui:",
         "eval:",
+        "cli:",
         "docker-build:",
         "docker-up:",
         "docker-down:",
