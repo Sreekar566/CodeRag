@@ -237,8 +237,36 @@ def test_index_repo_validation_error(api_client):
     response = api_client.post("/index", json={"owner": "", "repo": "valid"})
     assert response.status_code == 422
 
+    # Whitespace-only owner
+    response = api_client.post("/index", json={"owner": "   ", "repo": "valid"})
+    assert response.status_code == 422
+    assert "cannot be empty or whitespace" in str(response.json())
+
     # Missing repo
     response = api_client.post("/index", json={"owner": "valid"})
+    assert response.status_code == 422
+
+    # Whitespace-only repo
+    response = api_client.post("/index", json={"owner": "valid", "repo": "   "})
+    assert response.status_code == 422
+    assert "cannot be empty or whitespace" in str(response.json())
+
+    # Owner containing slashes
+    response = api_client.post("/index", json={"owner": "owner/repo", "repo": "valid"})
+    assert response.status_code == 422
+    assert "must not contain slashes" in str(response.json())
+
+    # Repo containing slashes
+    response = api_client.post("/index", json={"owner": "owner", "repo": "repo/sub"})
+    assert response.status_code == 422
+    assert "must not contain slashes" in str(response.json())
+
+    # Owner containing invalid special characters
+    response = api_client.post("/index", json={"owner": "bad name!", "repo": "valid"})
+    assert response.status_code == 422
+
+    # Invalid custom collection name
+    response = api_client.post("/index", json={"owner": "valid", "repo": "valid", "collection_name": "invalid col!"})
     assert response.status_code == 422
 
 
@@ -326,6 +354,46 @@ def test_query_multi_repo(api_client, mock_github):
     data = response.json()
     assert data["answer"] != ""
     assert len(data["sources"]) >= 1
+
+
+def test_query_request_validation(api_client, mock_github):
+    # Index repo first
+    api_client.post("/index", json={"owner": "testorg", "repo": "testrepo"})
+
+    # Leading/trailing whitespace in repo should be trimmed cleanly
+    res1 = api_client.post(
+        "/query",
+        json={"question": "How does auth work?", "repo": "  testorg/testrepo  "},
+    )
+    assert res1.status_code == 200
+
+    # Invalid repo format with too many slashes
+    res2 = api_client.post(
+        "/query",
+        json={"question": "How does auth work?", "repo": "owner/repo/extra"},
+    )
+    assert res2.status_code == 422
+    assert "Invalid repository specifier" in str(res2.json())
+
+    # Repos list with empty strings and duplicate entries normalized
+    res3 = api_client.post(
+        "/query",
+        json={
+            "question": "Where is login?",
+            "repos": ["  testorg/testrepo  ", "   ", "", "testorg/testrepo"],
+        },
+    )
+    assert res3.status_code == 200
+
+    # Collections list with whitespace and duplicate entries normalized
+    res4 = api_client.post(
+        "/query",
+        json={
+            "question": "Where is login?",
+            "collections": ["testorg_testrepo", "   ", "", "testorg_testrepo"],
+        },
+    )
+    assert res4.status_code == 200
 
 
 def test_query_empty_question(api_client):

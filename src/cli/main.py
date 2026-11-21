@@ -30,7 +30,8 @@ logger = logging.getLogger(__name__)
 
 def parse_repo_arg(repo_arg: str) -> tuple[str, str]:
     """Parse 'owner/repo' string into (owner, repo) tuple."""
-    parts = repo_arg.strip().split("/", 1)
+    cleaned = repo_arg.strip()
+    parts = cleaned.split("/")
     if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
         raise ValueError(
             f"Invalid repository format '{repo_arg}'. Expected 'owner/repo' (e.g. 'pallets/flask')."

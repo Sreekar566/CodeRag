@@ -39,6 +39,9 @@ def test_parse_repo_arg() -> None:
     with pytest.raises(ValueError, match="Invalid repository format"):
         parse_repo_arg("/repo")
 
+    with pytest.raises(ValueError, match="Invalid repository format"):
+        parse_repo_arg("owner/repo/extra")
+
 
 def test_cli_help(capsys: pytest.CaptureFixture) -> None:
     code = main(["--help"])

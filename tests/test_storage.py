@@ -22,6 +22,10 @@ def test_sanitize_collection_name():
     edge_sanitized = sanitize_collection_name(edge_long)
     assert 3 <= len(edge_sanitized) <= 63
     assert edge_sanitized.isalnum() or edge_sanitized.replace("_", "").isalnum()
+    # Edge cases: None, empty string, whitespace-only
+    assert sanitize_collection_name(None) == "codebase"
+    assert sanitize_collection_name("") == "codebase"
+    assert sanitize_collection_name("   ") == "codebase"
 
 
 def test_chroma_store_basic_operations():

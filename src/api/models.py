@@ -3,8 +3,13 @@ Pydantic data models for FastAPI request validation and structured response sche
 """
 from __future__ import annotations
 
+import re
 from typing import Any
-from pydantic import BaseModel, Field, ConfigDict, computed_field, model_validator
+from pydantic import BaseModel, Field, ConfigDict, computed_field, field_validator, model_validator
+
+# GitHub owner and repository naming constraints: alphanumeric, hyphens, underscores, dots
+GITHUB_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.\-]+$")
+VALID_COLLECTION_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 # ============================================================================
@@ -23,6 +28,70 @@ class IndexRequest(BaseModel):
     force: bool = Field(default=False, description="Force complete re-indexing even if commit SHA is unchanged")
     background: bool = Field(default=False, description="Run indexing as a background task and return immediately")
 
+    @field_validator("owner")
+    @classmethod
+    def validate_owner(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("owner cannot be empty or whitespace")
+        if "/" in cleaned:
+            raise ValueError("owner must not contain slashes; specify 'owner' and 'repo' separately")
+        if not GITHUB_NAME_PATTERN.match(cleaned):
+            raise ValueError(
+                f"owner '{v}' contains invalid characters. Must be alphanumeric, hyphens, underscores, or dots."
+            )
+        return cleaned
+
+    @field_validator("repo")
+    @classmethod
+    def validate_repo(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("repo cannot be empty or whitespace")
+        if "/" in cleaned:
+            raise ValueError("repo must not contain slashes; specify 'owner' and 'repo' separately")
+        if not GITHUB_NAME_PATTERN.match(cleaned):
+            raise ValueError(
+                f"repo '{v}' contains invalid characters. Must be alphanumeric, hyphens, underscores, or dots."
+            )
+        return cleaned
+
+    @field_validator("branch")
+    @classmethod
+    def validate_branch(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        if not cleaned:
+            return "main"
+        return cleaned
+
+    @field_validator("token")
+    @classmethod
+    def validate_token(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned if cleaned else None
+
+    @field_validator("collection_name")
+    @classmethod
+    def validate_collection_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        if not cleaned:
+            return None
+        if not (3 <= len(cleaned) <= 63):
+            raise ValueError(
+                f"collection_name length must be between 3 and 63 characters, got {len(cleaned)}"
+            )
+        if not VALID_COLLECTION_PATTERN.match(cleaned):
+            raise ValueError(
+                f"collection_name '{v}' contains invalid characters. Must be alphanumeric, underscores, or hyphens."
+            )
+        return cleaned
+
 
 class QueryRequest(BaseModel):
     """Request payload for natural language codebase queries."""
@@ -39,6 +108,72 @@ class QueryRequest(BaseModel):
     merge_overlapping: bool | None = Field(default=True, description="Merge contiguous or overlapping chunks from the same file")
     temperature: float = Field(default=0.2, ge=0.0, le=2.0, description="LLM sampling temperature")
     where: dict[str, Any] | None = Field(default=None, description="Metadata filter dictionary for vector store query")
+
+    @field_validator("repo")
+    @classmethod
+    def validate_query_repo(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        if not cleaned:
+            return None
+        if "/" in cleaned:
+            parts = cleaned.split("/")
+            if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+                raise ValueError(
+                    f"Invalid repository specifier '{v}'. Expected 'owner/repo' or 'name'."
+                )
+            return f"{parts[0].strip()}/{parts[1].strip()}"
+        return cleaned
+
+    @field_validator("repos")
+    @classmethod
+    def validate_query_repos(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        cleaned_list: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            if not isinstance(item, str):
+                continue
+            cleaned = item.strip()
+            if not cleaned:
+                continue
+            if "/" in cleaned:
+                parts = cleaned.split("/")
+                if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+                    raise ValueError(
+                        f"Invalid repository specifier '{item}'. Expected 'owner/repo' or 'name'."
+                    )
+                cleaned = f"{parts[0].strip()}/{parts[1].strip()}"
+            if cleaned not in seen:
+                seen.add(cleaned)
+                cleaned_list.append(cleaned)
+        return cleaned_list if cleaned_list else None
+
+    @field_validator("collection_name")
+    @classmethod
+    def validate_query_collection_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned if cleaned else None
+
+    @field_validator("collections")
+    @classmethod
+    def validate_query_collections(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        cleaned_list: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            if not isinstance(item, str):
+                continue
+            cleaned = item.strip()
+            if cleaned and cleaned not in seen:
+                seen.add(cleaned)
+                cleaned_list.append(cleaned)
+        return cleaned_list if cleaned_list else None
 
 
 # ============================================================================

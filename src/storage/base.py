@@ -10,15 +10,21 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 
-def sanitize_collection_name(name: str) -> str:
+def sanitize_collection_name(name: str | None) -> str:
     """
     Sanitize a repository or collection name to meet naming requirements:
     - 3-63 characters
     - Alphanumeric, underscores, hyphens
     - Starts and ends with alphanumeric
     """
+    if not name or not isinstance(name, str):
+        return "codebase"
+    cleaned = name.strip()
+    if not cleaned:
+        return "codebase"
+
     # Replace slashes and other non-alphanumeric/hyphen/underscore chars with underscore
-    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", cleaned)
     # Strip leading/trailing non-alphanumeric chars
     sanitized = re.sub(r"^[^a-zA-Z0-9]+", "", sanitized)
     sanitized = re.sub(r"[^a-zA-Z0-9]+$", "", sanitized)
