@@ -175,6 +175,9 @@ def handle_query(args: argparse.Namespace) -> int:
     elif args.repo:
         target_repos = [args.repo.strip()]
 
+    target_repo = target_repos[0] if len(target_repos) == 1 else None
+    target_repos_list = target_repos if len(target_repos) > 1 else None
+
     if args.api_url:
         from src.ui.client import ApiClient, ApiClientError
 
@@ -182,8 +185,8 @@ def handle_query(args: argparse.Namespace) -> int:
         try:
             res = client.query(
                 question=args.question,
-                repo=args.repo if not args.repos else None,
-                repos=target_repos if len(target_repos) > 1 else None,
+                repo=target_repo,
+                repos=target_repos_list,
                 collection_name=args.collection,
                 top_k=args.top_k,
                 rerank=not args.no_rerank,
@@ -212,8 +215,8 @@ def handle_query(args: argparse.Namespace) -> int:
         )
         rag_resp = engine.answer_question(
             question=args.question,
-            repo=args.repo if not args.repos else None,
-            repos=target_repos if len(target_repos) > 1 else None,
+            repo=target_repo,
+            repos=target_repos_list,
             collection_name=args.collection,
             top_k=args.top_k,
             max_context_tokens=args.max_tokens,
@@ -293,8 +296,9 @@ def handle_index(args: argparse.Namespace) -> int:
                 repo=repo,
                 branch=args.branch,
                 token=args.token,
+                collection_name=args.collection,
                 force=args.force,
-                sync=True,
+                background=False,
             )
         except ApiClientError as exc:
             print(f"Error indexing repository via API: {exc}", file=sys.stderr)

@@ -385,3 +385,24 @@ class TestRAGEngine:
         assert "return" in hints_assemble
         hints_telemetry = typing.get_type_hints(RAGEngine._record_telemetry_and_build_response)
         assert "assembly_result" in hints_telemetry
+
+    def test_resolve_citations_dotfile_preservation(self):
+        """Ensure _resolve_citations does not strip leading dot from dotfiles/hidden dirs."""
+        engine = RAGEngine(
+            vector_store=MagicMock(),
+            llm_provider=MagicMock(),
+        )
+        answer = "CI config is defined in `.github/workflows/ci.yml:1-25`."
+        chunks = [
+            {
+                "path": ".github/workflows/ci.yml",
+                "text": "name: CI\non: [push]",
+                "language": "yaml",
+                "repo": "org/repo",
+            }
+        ]
+        citations, _ = engine._resolve_citations(answer, chunks)
+        assert len(citations) == 1
+        assert citations[0].path == ".github/workflows/ci.yml"
+        assert citations[0].repo == "org/repo"
+        assert citations[0].language == "yaml"

@@ -299,8 +299,15 @@ class RAGEngine:
                             continue
                         chunk_repo = chunk.get("repo") or (chunk.get("metadata", {}) or {}).get("repo")
 
-                        norm_cit_path = cit.path.strip().replace("\\", "/").lstrip("./").lstrip("/")
-                        norm_chunk_path = str(chunk_path).strip().replace("\\", "/").lstrip("./").lstrip("/")
+                        norm_cit_path = cit.path.strip().replace("\\", "/")
+                        while norm_cit_path.startswith("./"):
+                            norm_cit_path = norm_cit_path[2:]
+                        norm_cit_path = norm_cit_path.lstrip("/")
+
+                        norm_chunk_path = str(chunk_path).strip().replace("\\", "/")
+                        while norm_chunk_path.startswith("./"):
+                            norm_chunk_path = norm_chunk_path[2:]
+                        norm_chunk_path = norm_chunk_path.lstrip("/")
 
                         path_matches = (
                             norm_cit_path.lower() == norm_chunk_path.lower()

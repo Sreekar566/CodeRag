@@ -263,6 +263,46 @@ def test_cli_query_with_repo_and_citations(capsys: pytest.CaptureFixture) -> Non
         assert "- `app/db.py:12-30` (octocat/repo)" in captured.out
 
 
+def test_cli_query_with_repos_single_flag(capsys: pytest.CaptureFixture) -> None:
+    from src.rag.citations import Citation
+    from src.rag.engine import RAGResponse
+
+    mock_resp = RAGResponse(
+        query="Explain DB connection",
+        answer="The database connection is managed via SQLAlchemy pool.",
+        citations=[Citation(path="app/db.py", start_line=12, end_line=30, repo="octocat/repo")],
+        sources=[{"text": "mock text", "path": "app/db.py"}],
+        model="fake-model",
+        metadata={"duration_ms": 100.0, "total_tokens": 100, "estimated_cost_usd": 0.0},
+    )
+
+    with patch("src.rag.engine.RAGEngine.answer_question", return_value=mock_resp) as mock_answer:
+        code = main(["query", "Explain DB connection", "--repos", "octocat/repo", "--llm", "fake"])
+        assert code == 0
+        assert mock_answer.call_args.kwargs["repo"] == "octocat/repo"
+        assert mock_answer.call_args.kwargs["repos"] is None
+
+
+def test_cli_query_with_repos_multiple_flag(capsys: pytest.CaptureFixture) -> None:
+    from src.rag.citations import Citation
+    from src.rag.engine import RAGResponse
+
+    mock_resp = RAGResponse(
+        query="Cross repo auth",
+        answer="Auth across services.",
+        citations=[],
+        sources=[],
+        model="fake-model",
+        metadata={"duration_ms": 100.0, "total_tokens": 100, "estimated_cost_usd": 0.0},
+    )
+
+    with patch("src.rag.engine.RAGEngine.answer_question", return_value=mock_resp) as mock_answer:
+        code = main(["query", "Cross repo auth", "--repos", "octocat/repo1,octocat/repo2", "--llm", "fake"])
+        assert code == 0
+        assert mock_answer.call_args.kwargs["repo"] is None
+        assert mock_answer.call_args.kwargs["repos"] == ["octocat/repo1", "octocat/repo2"]
+
+
 @patch("src.ui.client.ApiClient.query")
 def test_cli_query_remote(mock_query: MagicMock, capsys: pytest.CaptureFixture) -> None:
     mock_query.return_value = {
@@ -285,6 +325,22 @@ def test_cli_query_remote(mock_query: MagicMock, capsys: pytest.CaptureFixture) 
     captured = capsys.readouterr()
     assert "Config is loaded in src/config.py" in captured.out
     assert "`src/config.py:1-20`" in captured.out
+
+
+@patch("src.ui.client.ApiClient.query")
+def test_cli_query_remote_with_repos_single_flag(mock_query: MagicMock, capsys: pytest.CaptureFixture) -> None:
+    mock_query.return_value = {
+        "query": "Where is config loaded?",
+        "answer": "Config is loaded in src/config.py",
+        "citations": [],
+        "model": "fake-model",
+        "metadata": {"duration_ms": 10.0, "estimated_cost_usd": 0.0},
+    }
+
+    code = main(["--api-url", "http://localhost:8000", "query", "Where is config loaded?", "--repos", "octocat/repo"])
+    assert code == 0
+    assert mock_query.call_args.kwargs["repo"] == "octocat/repo"
+    assert mock_query.call_args.kwargs["repos"] is None
 
 
 @patch("src.ui.client.ApiClient.query", side_effect=ApiClientError("Query failed"))
@@ -347,7 +403,7 @@ def test_cli_index_local_error(mock_indexer: MagicMock, capsys: pytest.CaptureFi
     assert "Error indexing repository 'owner/repo'" in captured.err
 
 
-@patch("src.ui.client.ApiClient.index_repo")
+@patch("src.ui.client.ApiClient.index_repo", autospec=True)
 def test_cli_index_remote(mock_index: MagicMock, capsys: pytest.CaptureFixture) -> None:
     mock_index.return_value = {
         "branch": "main",
@@ -361,6 +417,28 @@ def test_cli_index_remote(mock_index: MagicMock, capsys: pytest.CaptureFixture) 
     assert code == 0
     captured = capsys.readouterr()
     assert "Repository 'remote/repo' indexing complete:" in captured.out
+    assert mock_index.call_count == 1
+    _, kwargs = mock_index.call_args
+    assert kwargs["owner"] == "remote"
+    assert kwargs["repo"] == "repo"
+    assert kwargs["background"] is False
+
+
+@patch("src.ui.client.ApiClient.index_repo", autospec=True)
+def test_cli_index_remote_with_collection(mock_index: MagicMock, capsys: pytest.CaptureFixture) -> None:
+    mock_index.return_value = {
+        "branch": "develop",
+        "commit_sha": "def67890",
+        "filtered_files": 5,
+        "chunks_stored": 12,
+        "collection": "custom_col",
+    }
+
+    code = main(["--api-url", "http://localhost:8000", "index", "remote/repo", "--collection", "custom_col"])
+    assert code == 0
+    _, kwargs = mock_index.call_args
+    assert kwargs["collection_name"] == "custom_col"
+    assert kwargs["background"] is False
 
 
 @patch("src.ui.client.ApiClient.index_repo", side_effect=ApiClientError("409 Conflict"))

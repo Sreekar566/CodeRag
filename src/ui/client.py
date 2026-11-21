@@ -182,11 +182,15 @@ class ApiClient:
         collection_name: str | None = None,
         force: bool = False,
         background: bool = False,
+        sync: bool | None = None,
         timeout: float = 300.0,
     ) -> dict[str, Any]:
         """
         Trigger repository indexing (synchronous or background).
         """
+        if sync is not None:
+            background = not sync
+
         payload: dict[str, Any] = {
             "owner": owner,
             "repo": repo,

@@ -220,6 +220,22 @@ def test_api_client_index_repo():
         assert payload["background"] is False
 
 
+def test_api_client_index_repo_sync_param():
+    """Test index_repo correctly handles sync parameter for backward compatibility."""
+    client = ApiClient("http://fake-api:8000")
+    fake_resp = MagicMock()
+    fake_resp.status_code = 200
+    fake_resp.json.return_value = {"status": "created"}
+
+    with patch.object(client.session, "request", return_value=fake_resp) as mock_req:
+        client.index_repo(owner="foo", repo="bar", sync=True)
+        assert mock_req.call_args[1]["json"]["background"] is False
+
+    with patch.object(client.session, "request", return_value=fake_resp) as mock_req:
+        client.index_repo(owner="foo", repo="bar", sync=False)
+        assert mock_req.call_args[1]["json"]["background"] is True
+
+
 def test_api_client_query():
     """Test query sends parameters and returns response structure."""
     client = ApiClient("http://fake-api:8000")
