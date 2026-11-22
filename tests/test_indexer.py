@@ -152,6 +152,47 @@ def test_index_repository_handles_file_fetch_failure(mock_get_content, mock_filt
     assert store.count("testowner_testrepo") == 1
 
 
+@patch("src.storage.indexer.get_repo_tree")
+@patch("src.storage.indexer.filter_files")
+@patch("src.storage.indexer.get_file_content")
+def test_index_repository_handles_binary_files_as_skipped(mock_get_content, mock_filter, mock_get_tree):
+    mock_get_tree.return_value = [
+        {"path": "app/auth.py", "type": "blob", "size": 100},
+        {"path": "binary.dat", "type": "blob", "size": 100},
+    ]
+    mock_filter.return_value = [
+        {"path": "app/auth.py", "type": "blob", "size": 100},
+        {"path": "binary.dat", "type": "blob", "size": 100},
+    ]
+
+    def fake_content(owner, repo, path, token):
+        if path == "app/auth.py":
+            return "def login(): pass\n"
+        elif path == "binary.dat":
+            return None  # binary / undecodable file returns None
+        raise RuntimeError(f"Unexpected path: {path}")
+
+    mock_get_content.side_effect = fake_content
+
+    mock_model = MagicMock()
+    mock_model.encode.return_value = np.array([[0.1, 0.2]])
+
+    store = InMemoryVectorStore()
+
+    stats = index_repository(
+        owner="testowner",
+        repo="testrepo",
+        vector_store=store,
+        embedder_model=mock_model,
+    )
+
+    assert stats["filtered_files"] == 2
+    assert stats["files_processed"] == 1
+    assert stats["chunks_stored"] == 1
+    assert stats["skipped_files"] == ["binary.dat"]
+    assert store.count("testowner_testrepo") == 1
+
+
 @patch("src.storage.indexer.get_vector_store")
 @patch("src.storage.indexer.get_repo_tree")
 @patch("src.storage.indexer.get_file_content")

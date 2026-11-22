@@ -33,8 +33,8 @@ def index_files(
 
     all_chunks: list[dict] = []
     for f in files:
-        path = f.get("path", "")
-        content = f.get("content", "")
+        path = f.get("path") or ""
+        content = f.get("content") or ""
         if not path or not content:
             continue
         file_chunks = chunk_fn(content, path)
@@ -136,7 +136,11 @@ def index_repository(
             continue
         try:
             content = get_file_content(owner, repo, path, token)
-            files.append({"path": path, "content": content})
+            if content is not None:
+                files.append({"path": path, "content": content})
+            else:
+                logger.warning(f"Skipping binary or undecodable file: {path}")
+                skipped_files.append(path)
         except Exception as e:
             logger.warning(f"Failed to fetch content for {path}: {e}")
             skipped_files.append(path)
