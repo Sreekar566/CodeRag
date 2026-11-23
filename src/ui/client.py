@@ -294,8 +294,14 @@ class ApiClient:
     def check_readiness(self) -> dict[str, Any]:
         """
         Query the container readiness probe endpoint for deep subsystem health status.
+        Returns the readiness dictionary even if HTTP 503 is returned by the probe.
         """
-        return self._request("GET", "/health/ready")
+        try:
+            return self._request("GET", "/health/ready")
+        except ApiClientError as exc:
+            if exc.status_code == 503 and isinstance(exc.details, dict):
+                return exc.details
+            raise
 
     def get_recent_queries(self, limit: int = 50) -> list[dict[str, Any]]:
         """

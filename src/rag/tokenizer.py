@@ -112,16 +112,20 @@ def truncate_text_to_tokens(
 def estimate_chunk_tokens(chunk: dict[str, Any], encoding_name: str = DEFAULT_ENCODING) -> int:
     """
     Calculate the total token cost of a chunk as formatted for prompt context,
-    including file header, line numbers, language tag, and markdown fences.
+    including file header, line numbers, language tag, repository, and markdown fences.
     """
     meta = chunk.get("metadata") or {}
     path = chunk.get("path") or meta.get("path") or "unknown"
     start = chunk.get("start_line") or meta.get("start_line") or 1
     end = chunk.get("end_line") or meta.get("end_line") or 1
     lang = chunk.get("language") or meta.get("language") or ""
+    repo = chunk.get("repo") or meta.get("repo")
+    is_truncated = chunk.get("truncated", False)
     raw_text = chunk.get("text") or ""
     text = raw_text.strip()
 
-    header = f"[Source]\nFile: {path} (Lines {start}-{end})\nLanguage: {lang}\n```{lang}\n"
+    header_suffix = " [Truncated]" if is_truncated else ""
+    repo_prefix = f"Repo: {repo}\n" if repo else ""
+    header = f"[Source]{header_suffix}\n{repo_prefix}File: {path} (Lines {start}-{end})\nLanguage: {lang}\n```{lang}\n"
     footer = "\n```"
     return count_tokens(header + text + footer, encoding_name=encoding_name)

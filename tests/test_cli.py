@@ -471,6 +471,24 @@ def test_cli_changes_local(
     assert "Added Files:      1" in captured.out
 
 
+@patch("src.ingestion.github_client.get_default_branch", return_value="master")
+@patch("src.ingestion.github_client.get_latest_commit_sha", return_value="f00ba4")
+@patch("src.ingestion.github_client.get_repo_tree", return_value=[{"path": "a.py", "sha": "1", "type": "blob"}])
+@patch("src.ingestion.filters.filter_files", return_value=[{"path": "a.py", "sha": "1"}])
+def test_cli_changes_local_auto_branch(
+    mock_filter: MagicMock,
+    mock_tree: MagicMock,
+    mock_sha: MagicMock,
+    mock_branch: MagicMock,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    code = main(["changes", "foo/bar", "--branch", "auto"])
+    assert code == 0
+    mock_branch.assert_called_once_with("foo", "bar", None)
+    mock_sha.assert_called_once_with("foo", "bar", None, branch="master")
+    mock_tree.assert_called_once_with("foo", "bar", None, branch="master")
+
+
 @patch("src.ingestion.github_client.get_repo_tree", side_effect=RuntimeError("Not found"))
 def test_cli_changes_local_error(mock_tree: MagicMock, capsys: pytest.CaptureFixture) -> None:
     code = main(["changes", "foo/bar"])
@@ -1154,4 +1172,44 @@ def test_cli_doctor_remote_connection_error(mock_health: MagicMock, capsys: pyte
     assert "API Connectivity" in captured.out
     assert "FAIL" in captured.out
     assert "Connection failed" in captured.out
+
+
+@patch("src.ui.client.ApiClient.health")
+@patch("src.ui.client.ApiClient.check_liveness")
+@patch("src.ui.client.ApiClient.check_readiness")
+@patch("src.ui.client.ApiClient.get_metrics")
+def test_cli_doctor_remote_readiness_api_client_error(
+    mock_metrics: MagicMock,
+    mock_readiness: MagicMock,
+    mock_liveness: MagicMock,
+    mock_health: MagicMock,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    mock_health.return_value = {
+        "status": "ok",
+        "app_name": "AI Codebase Intelligence Platform",
+        "version": "0.1.0",
+        "vector_store_type": "ChromaVectorStore",
+    }
+    mock_liveness.return_value = {"status": "alive", "timestamp": "2026-11-23T10:00:00Z"}
+    mock_readiness.side_effect = ApiClientError(
+        "API returned status 503",
+        status_code=503,
+        details={
+            "status": "unhealthy",
+            "checks": {
+                "storage": {"status": "unhealthy", "error": "Disk full"},
+                "registry": {"status": "healthy"},
+            },
+        },
+    )
+    mock_metrics.return_value = {"total_queries": 0, "uptime_seconds": 10.0}
+
+    code = main(["--api-url", "http://localhost:8000", "doctor"])
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "FAIL" in captured.out
+    assert "UNHEALTHY" in captured.out
+    assert "Disk full" in captured.out
+    assert "Subsystem: storage" in captured.out
 

@@ -85,8 +85,8 @@ def format_timestamp(ts: str | None) -> str:
     if not ts:
         return "N/A"
     try:
-        # Simplifies '2026-10-21T00:00:00.000000' -> '2026-10-21 00:00:00 UTC'
-        clean = ts.replace("T", " ").split(".")[0]
+        # Simplifies '2026-10-21T00:00:00.000000' or '2026-10-21T00:00:00Z' -> '2026-10-21 00:00:00 UTC'
+        clean = ts.replace("T", " ").split(".")[0].rstrip("Z")
         return f"{clean} UTC"
     except Exception:
         return str(ts)

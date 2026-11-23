@@ -108,3 +108,16 @@ def test_api_client_health_probes(health_probe_client, monkeypatch):
 
     ready_res = api_cli.check_readiness()
     assert ready_res["status"] == "ready"
+
+
+def test_api_client_check_readiness_unhealthy(health_probe_client, monkeypatch):
+    """Verify ApiClient.check_readiness returns diagnostic data when server returns 503."""
+    client, _, _ = health_probe_client
+    api_cli = ApiClient(base_url="http://testserver")
+    monkeypatch.setattr(api_cli, "session", client)
+
+    with patch("os.access", return_value=False):
+        ready_res = api_cli.check_readiness()
+        assert ready_res["status"] == "unhealthy"
+        assert ready_res["checks"]["persistence"]["status"] == "unhealthy"
+        assert "not writable" in ready_res["checks"]["persistence"]["error"]

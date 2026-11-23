@@ -379,6 +379,7 @@ def test_format_timestamp():
     assert format_timestamp(None) == "N/A"
     assert format_timestamp("") == "N/A"
     assert format_timestamp("2026-10-21T00:00:00.123456") == "2026-10-21 00:00:00 UTC"
+    assert format_timestamp("2026-10-21T00:00:00Z") == "2026-10-21 00:00:00 UTC"
     # Exception fallback when value cannot be string-replaced like ISO timestamp
     assert format_timestamp(12345) == "12345"
 

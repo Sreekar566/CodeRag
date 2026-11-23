@@ -117,6 +117,27 @@ class TestTokenizer:
         tokens = estimate_chunk_tokens(chunk)
         assert tokens > 0
 
+    def test_estimate_chunk_tokens_with_repo_and_truncation(self):
+        chunk_plain = {
+            "path": "app/main.py",
+            "start_line": 1,
+            "end_line": 10,
+            "language": "python",
+            "text": "x = 1\ny = 2",
+        }
+        chunk_annotated = {
+            "path": "app/main.py",
+            "start_line": 1,
+            "end_line": 10,
+            "language": "python",
+            "repo": "owner/repo",
+            "truncated": True,
+            "text": "x = 1\ny = 2",
+        }
+        tokens_plain = estimate_chunk_tokens(chunk_plain)
+        tokens_annotated = estimate_chunk_tokens(chunk_annotated)
+        assert tokens_annotated > tokens_plain
+
     def test_truncate_text_to_tokens_none_text(self):
         truncated, count = truncate_text_to_tokens(None, 100)
         assert truncated == ""

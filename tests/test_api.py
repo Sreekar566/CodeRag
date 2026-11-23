@@ -437,12 +437,17 @@ def test_collections_crud(api_client, mock_github):
     assert detail_data["chunk_count"] > 0
     assert len(detail_data["sample_chunks"]) > 0
 
+    # Get collection details using repository identifier with slash
+    slash_res = api_client.get("/collections/testorg/testrepo")
+    assert slash_res.status_code == 200
+    assert slash_res.json()["name"] == col_name
+
     # Get nonexistent collection
     missing_res = api_client.get("/collections/nonexistent_col")
     assert missing_res.status_code == 404
 
-    # Delete collection
-    del_res = api_client.delete(f"/collections/{col_name}")
+    # Delete collection using repository identifier with slash
+    del_res = api_client.delete("/collections/testorg/testrepo")
     assert del_res.status_code == 200
     assert del_res.json()["success"] is True
 
@@ -463,6 +468,13 @@ def test_preview_repo_changes(api_client, mock_github):
     assert data["repo"] == "testrepo"
     assert data["has_changes"] is False
     assert len(data["unchanged_files"]) == 2
+
+    # Preview changes with branch="auto"
+    res_auto = api_client.get("/repos/testorg/testrepo/changes?branch=auto")
+    assert res_auto.status_code == 200
+    data_auto = res_auto.json()
+    assert data_auto["branch"] == "main"
+    assert data_auto["has_changes"] is False
 
 
 def test_delete_repository(api_client, mock_github):

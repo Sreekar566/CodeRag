@@ -71,13 +71,13 @@ def query_codebase(
         SourceChunkModel(
             id=str(s.get("id", "")),
             text=str(s.get("text", "")),
-            path=s.get("path"),
-            start_line=s.get("start_line"),
-            end_line=s.get("end_line"),
-            language=s.get("language"),
+            path=s.get("path") or (s.get("metadata") or {}).get("path"),
+            start_line=s.get("start_line") or (s.get("metadata") or {}).get("start_line"),
+            end_line=s.get("end_line") or (s.get("metadata") or {}).get("end_line"),
+            language=s.get("language") or (s.get("metadata") or {}).get("language"),
             similarity=s.get("similarity"),
             distance=s.get("distance"),
-            repo=s.get("repo"),
+            repo=s.get("repo") or (s.get("metadata") or {}).get("repo"),
             metadata=s.get("metadata") or {},
         )
         for s in rag_response.sources

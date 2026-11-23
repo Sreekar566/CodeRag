@@ -85,7 +85,7 @@ def list_collections(
     return CollectionListResponse(collections=results, total=len(results))
 
 
-@router.get("/{name}", response_model=CollectionDetailResponse, summary="Get collection details")
+@router.get("/{name:path}", response_model=CollectionDetailResponse, summary="Get collection details")
 def get_collection(
     name: str,
     storage: VectorStore = Depends(get_storage),
@@ -112,7 +112,7 @@ def get_collection(
     )
 
 
-@router.delete("/{name}", response_model=DeleteResponse, summary="Delete a vector collection")
+@router.delete("/{name:path}", response_model=DeleteResponse, summary="Delete a vector collection")
 def delete_collection(
     name: str,
     storage: VectorStore = Depends(get_storage),

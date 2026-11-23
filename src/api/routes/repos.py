@@ -144,6 +144,14 @@ def preview_repo_changes(
     """
     meta = registry.get(owner, repo)
     target_branch = branch or (meta.branch if meta else "main")
+    if not target_branch or target_branch == "auto":
+        try:
+            target_branch = get_default_branch(owner, repo, token)
+        except Exception as e:
+            logger.warning(
+                f"Could not auto-detect default branch for {owner}/{repo}: {e}. Falling back to 'main'"
+            )
+            target_branch = "main"
 
     try:
         latest_sha = get_latest_commit_sha(owner, repo, token, branch=target_branch)

@@ -377,6 +377,12 @@ def handle_changes(args: argparse.Namespace) -> int:
         registry = get_repo_registry()
         meta = registry.get(owner, repo)
         target_branch = args.branch or (meta.branch if meta else "main")
+        if not target_branch or target_branch == "auto":
+            try:
+                from src.ingestion.github_client import get_default_branch
+                target_branch = get_default_branch(owner, repo, args.token)
+            except Exception:
+                target_branch = "main"
 
         try:
             latest_sha = get_latest_commit_sha(owner, repo, args.token, branch=target_branch)
@@ -814,8 +820,21 @@ def handle_doctor(args: argparse.Namespace) -> int:
                 })
 
             # 3. Readiness Probe & Deep Subsystem Checks
+            readiness = None
             try:
                 readiness = client.check_readiness()
+            except ApiClientError as exc:
+                if exc.status_code == 503 and isinstance(exc.details, dict):
+                    readiness = exc.details
+                else:
+                    checks.append({
+                        "category": "API Server",
+                        "name": "Readiness Probe",
+                        "status": "FAIL",
+                        "message": f"/health/ready probe failed: {exc}",
+                    })
+
+            if readiness is not None:
                 ready_status = readiness.get("status", "unknown")
                 subchecks = readiness.get("checks", {})
                 if ready_status == "ready":
@@ -841,13 +860,6 @@ def handle_doctor(args: argparse.Namespace) -> int:
                         "status": "PASS" if sub_st == "healthy" else "FAIL",
                         "message": sub_err if sub_err else f"{sub_name} operational",
                     })
-            except ApiClientError as exc:
-                checks.append({
-                    "category": "API Server",
-                    "name": "Readiness Probe",
-                    "status": "FAIL",
-                    "message": f"/health/ready probe failed: {exc}",
-                })
 
             # 4. Telemetry & Metrics
             try:
