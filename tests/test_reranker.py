@@ -242,3 +242,12 @@ class TestReRanker:
         assert len(merged) == 1
         assert meta1["end_line"] == 2
         assert merged[0]["metadata"]["end_line"] == 3
+
+    def test_reranker_with_none_metadata(self):
+        chunks = [
+            {"path": "a.py", "text": "def compute_sum(a, b): return a + b", "metadata": None},
+            {"path": None, "text": "def compute_product(a, b): return a * b", "metadata": None},
+        ]
+        reranked = rerank_chunks("compute_sum", chunks)
+        assert len(reranked) == 2
+        assert reranked[0]["path"] == "a.py"

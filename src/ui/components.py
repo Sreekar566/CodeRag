@@ -23,7 +23,11 @@ def format_citation(citation: dict[str, Any] | Any) -> str:
         start = citation.get("start_line")
         end = citation.get("end_line")
 
-        prefix = f"{repo}:" if repo else ""
+        prefix = (
+            f"{repo}:"
+            if repo and not path.startswith(f"{repo}:") and not path.startswith(f"{repo}/")
+            else ""
+        )
         if start is not None and end is not None:
             return f"{prefix}{path}:{start}-{end}"
         if start is not None:

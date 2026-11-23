@@ -57,6 +57,15 @@ class TestCitation:
         )
         assert c.format_citation() == "miguelgrinberg/microblog/app/auth.py:10-20"
 
+    def test_format_citation_with_repo_colon_prefix_no_duplicate(self):
+        c = Citation(
+            path="miguelgrinberg/microblog:app/auth.py",
+            start_line=10,
+            end_line=20,
+            repo="miguelgrinberg/microblog",
+        )
+        assert c.format_citation() == "miguelgrinberg/microblog:app/auth.py:10-20"
+
     def test_format_citation_with_repo_single_line(self):
         c = Citation(path="app/auth.py", start_line=15, repo="org/repo")
         assert c.format_citation() == "org/repo:app/auth.py:15"

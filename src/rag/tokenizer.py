@@ -114,10 +114,11 @@ def estimate_chunk_tokens(chunk: dict[str, Any], encoding_name: str = DEFAULT_EN
     Calculate the total token cost of a chunk as formatted for prompt context,
     including file header, line numbers, language tag, and markdown fences.
     """
-    path = chunk.get("path") or chunk.get("metadata", {}).get("path", "unknown")
-    start = chunk.get("start_line") or chunk.get("metadata", {}).get("start_line", 1)
-    end = chunk.get("end_line") or chunk.get("metadata", {}).get("end_line", 1)
-    lang = chunk.get("language") or chunk.get("metadata", {}).get("language", "")
+    meta = chunk.get("metadata") or {}
+    path = chunk.get("path") or meta.get("path") or "unknown"
+    start = chunk.get("start_line") or meta.get("start_line") or 1
+    end = chunk.get("end_line") or meta.get("end_line") or 1
+    lang = chunk.get("language") or meta.get("language") or ""
     raw_text = chunk.get("text") or ""
     text = raw_text.strip()
 

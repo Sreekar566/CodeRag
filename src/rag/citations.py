@@ -30,7 +30,7 @@ class Citation:
         else:
             loc = self.path
 
-        if self.repo and not self.path.startswith(f"{self.repo}/"):
+        if self.repo and not self.path.startswith(f"{self.repo}/") and not self.path.startswith(f"{self.repo}:"):
             return f"{self.repo}:{loc}"
         return loc
 

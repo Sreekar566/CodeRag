@@ -78,7 +78,7 @@ def query_codebase(
             similarity=s.get("similarity"),
             distance=s.get("distance"),
             repo=s.get("repo"),
-            metadata=s.get("metadata", {}),
+            metadata=s.get("metadata") or {},
         )
         for s in rag_response.sources
     ]

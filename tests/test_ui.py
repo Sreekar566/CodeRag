@@ -328,6 +328,12 @@ def test_format_citation():
     # String pass-through
     assert format_citation("direct_string:1-10") == "direct_string:1-10"
 
+    # Redundant repo in path (slash or colon) should not duplicate repo prefix
+    c5 = {"repo": "owner/repo", "path": "owner/repo/src/main.py", "start_line": 5, "end_line": 20}
+    assert format_citation(c5) == "owner/repo/src/main.py:5-20"
+    c6 = {"repo": "owner/repo", "path": "owner/repo:src/main.py", "start_line": 5, "end_line": 20}
+    assert format_citation(c6) == "owner/repo:src/main.py:5-20"
+
     # Non-dict and non-string fallback
     assert format_citation(12345) == "12345"
 

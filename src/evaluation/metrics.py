@@ -153,8 +153,9 @@ def compute_retrieval_metrics(
     retrieved_paths: list[str] = []
     for item in retrieved_chunks:
         if isinstance(item, dict):
-            p = item.get("path") or item.get("metadata", {}).get("path", "")
-            repo = item.get("repo") or (item.get("metadata", {}) or {}).get("repo", "")
+            meta = item.get("metadata") or {}
+            p = item.get("path") or meta.get("path", "")
+            repo = item.get("repo") or meta.get("repo", "")
             if repo and p and not str(p).startswith(f"{repo}:"):
                 p = f"{repo}:{p}"
         else:
@@ -226,8 +227,9 @@ def compute_citation_metrics(
     context_paths: list[str] = []
     for s in retrieved_sources:
         if isinstance(s, dict):
-            p = s.get("path") or (s.get("metadata", {}) or {}).get("path", "")
-            repo = s.get("repo") or (s.get("metadata", {}) or {}).get("repo", "")
+            meta = s.get("metadata") or {}
+            p = s.get("path") or meta.get("path", "")
+            repo = s.get("repo") or meta.get("repo", "")
             if p:
                 if repo and not str(p).startswith(f"{repo}:"):
                     context_paths.append(f"{repo}:{p}")

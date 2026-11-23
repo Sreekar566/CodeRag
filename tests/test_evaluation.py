@@ -105,6 +105,23 @@ def test_retrieval_metrics_miss():
     assert metrics.relevant_files_found == []
 
 
+def test_retrieval_and_citation_metrics_with_none_metadata():
+    retrieved = [
+        {"path": "app/auth/routes.py", "metadata": None},
+        {"metadata": None},
+    ]
+    expected = ["app/auth/routes.py"]
+    ret_metrics = compute_retrieval_metrics(retrieved, expected, k=2)
+    assert ret_metrics.hit is True
+    assert ret_metrics.hit_rate == 1.0
+
+    sources = [{"path": "app/auth/routes.py", "metadata": None}]
+    citations = [{"path": "app/auth/routes.py", "metadata": None}]
+    prec, rec, hall, ground = compute_citation_metrics(citations, sources, expected)
+    assert ground == 1.0
+    assert hall == []
+
+
 def test_retrieval_metrics_negative_probe():
     retrieved = [
         {"path": "config.py"},

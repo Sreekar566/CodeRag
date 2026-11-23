@@ -32,7 +32,7 @@ def _get_sample_chunks(storage: VectorStore, collection_name: str, limit: int = 
         if isinstance(storage, InMemoryVectorStore):
             items = list(storage._get_collection(sanitized).values())[:limit]
             for it in items:
-                meta = it.get("metadata", {})
+                meta = it.get("metadata") or {}
                 sample_items.append({
                     "id": it.get("id"),
                     "text": (it.get("text") or "")[:200],
@@ -40,6 +40,7 @@ def _get_sample_chunks(storage: VectorStore, collection_name: str, limit: int = 
                     "start_line": meta.get("start_line"),
                     "end_line": meta.get("end_line"),
                     "language": meta.get("language"),
+                    "metadata": meta,
                 })
         elif isinstance(storage, ChromaVectorStore):
             col = storage.get_or_create_collection(sanitized)
@@ -57,6 +58,7 @@ def _get_sample_chunks(storage: VectorStore, collection_name: str, limit: int = 
                         "start_line": meta.get("start_line"),
                         "end_line": meta.get("end_line"),
                         "language": meta.get("language"),
+                        "metadata": meta,
                     })
     except Exception as e:
         logger.warning(f"Could not retrieve sample chunks for {collection_name}: {e}")

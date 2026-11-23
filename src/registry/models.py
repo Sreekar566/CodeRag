@@ -66,7 +66,7 @@ class RepositoryMetadata:
             file_shas=data.get("file_shas", {}),
             status=data.get("status", "ready"),
             error=data.get("error"),
-            metadata=data.get("metadata", {}),
+            metadata=data.get("metadata") or {},
         )
 
 

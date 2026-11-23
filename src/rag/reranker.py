@@ -272,7 +272,8 @@ class ReRanker:
         for chunk in candidates:
             item = chunk.copy()
             text = item.get("text", "")
-            path = item.get("path") or item.get("metadata", {}).get("path", "")
+            meta = item.get("metadata") or {}
+            path = item.get("path") or meta.get("path", "")
 
             # Semantic score (normalized 0 to 1)
             raw_sim = item.get("similarity", item.get("score", 0.5))

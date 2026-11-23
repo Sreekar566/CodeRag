@@ -97,6 +97,26 @@ class TestTokenizer:
         tokens = estimate_chunk_tokens(chunk)
         assert tokens > 0
 
+    def test_estimate_chunk_tokens_none_metadata(self):
+        chunk = {
+            "metadata": None,
+            "text": "def test(): pass",
+        }
+        tokens = estimate_chunk_tokens(chunk)
+        assert tokens > 0
+
+    def test_estimate_chunk_tokens_none_fields_fallback(self):
+        chunk = {
+            "path": None,
+            "start_line": None,
+            "end_line": None,
+            "language": None,
+            "metadata": None,
+            "text": "foo = 1",
+        }
+        tokens = estimate_chunk_tokens(chunk)
+        assert tokens > 0
+
     def test_truncate_text_to_tokens_none_text(self):
         truncated, count = truncate_text_to_tokens(None, 100)
         assert truncated == ""

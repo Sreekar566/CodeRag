@@ -493,11 +493,11 @@ with tab_collections:
                     if sample_chunks:
                         st.subheader(f"Sample Chunks ({len(sample_chunks)})")
                         for idx, chunk in enumerate(sample_chunks, 1):
-                            meta = chunk.get("metadata", {})
-                            path = meta.get("path") or chunk.get("id", "chunk")
-                            start = meta.get("start_line")
-                            end = meta.get("end_line")
-                            lang = meta.get("language") or "text"
+                            meta = chunk.get("metadata") or {}
+                            path = chunk.get("path") or meta.get("path") or chunk.get("id", "chunk")
+                            start = chunk.get("start_line") or meta.get("start_line")
+                            end = chunk.get("end_line") or meta.get("end_line")
+                            lang = chunk.get("language") or meta.get("language") or "text"
                             line_info = f":{start}-{end}" if start and end else ""
 
                             with st.expander(f"Chunk #{idx} — `{path}{line_info}`"):
