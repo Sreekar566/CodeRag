@@ -322,9 +322,15 @@ python -m src.cli audit miguelgrinberg/microblog
 python -m src.cli audit miguelgrinberg/microblog --markdown
 python -m src.cli audit miguelgrinberg/microblog --show-kept
 
+# Run platform diagnostic doctor check (environment, storage, models, health probes)
+python -m src.cli doctor
+python -m src.cli doctor --verbose
+python -m src.cli doctor --json
+
 # Execute commands against a running API server
 python -m src.cli --api-url http://localhost:8000 status
 python -m src.cli --api-url http://localhost:8000 metrics
+python -m src.cli --api-url http://localhost:8000 doctor
 ```
 
 ### Makefile Automation
@@ -341,6 +347,7 @@ make cli ARGS="repos"
 make cli ARGS="query 'What is the user model?' --llm fake"
 make metrics ARGS="--prometheus"
 make audit ARGS="miguelgrinberg/microblog"
+make doctor
 
 # Run Python syntax and bytecode compilation verification
 make lint

@@ -25,6 +25,16 @@ case "$1" in
         echo "Running developer CLI tool..."
         exec python -m src.cli.main "$@"
         ;;
+    audit)
+        shift
+        echo "Running ingestion audit check..."
+        exec python -m src.cli.main audit "$@"
+        ;;
+    doctor)
+        shift
+        echo "Running platform diagnostic doctor check..."
+        exec python -m src.cli.main doctor "$@"
+        ;;
     test)
         shift
         echo "Running test suite..."

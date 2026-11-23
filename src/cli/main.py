@@ -14,12 +14,19 @@ Usage:
     python -m src.cli metrics --prometheus
     python -m src.cli audit owner/repo
     python -m src.cli audit owner/repo --markdown
+    python -m src.cli doctor
+    python -m src.cli doctor --verbose
+    python -m src.cli doctor --json
 """
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import logging
+import os
+from pathlib import Path
+import platform
 import sys
 from typing import Any
 
@@ -745,6 +752,419 @@ def handle_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_doctor(args: argparse.Namespace) -> int:
+    """Run comprehensive platform diagnostic checks (environment, storage, models, probes)."""
+    checks: list[dict[str, Any]] = []
+    recommendations: list[str] = []
+
+    if args.api_url:
+        mode = "remote"
+        from src.ui.client import ApiClient, ApiClientError
+
+        client = ApiClient(base_url=args.api_url)
+        # 1. API Connectivity & General Health
+        try:
+            health = client.health()
+            app_name = health.get("app_name", "AI Codebase Intelligence Platform")
+            version = health.get("version", "unknown")
+            vstore = health.get("vector_store_type", "unknown")
+            checks.append({
+                "category": "API Server",
+                "name": "API Connectivity",
+                "status": "PASS",
+                "message": f"{app_name} v{version} ({vstore})",
+            })
+        except ApiClientError as exc:
+            checks.append({
+                "category": "API Server",
+                "name": "API Connectivity",
+                "status": "FAIL",
+                "message": f"Connection failed to {args.api_url}: {exc}",
+            })
+            recommendations.append(
+                f"Verify the API service is running on {args.api_url} (e.g. 'make api' or 'docker compose up')."
+            )
+            health = None
+
+        if health is not None:
+            # 2. Liveness Probe
+            try:
+                liveness = client.check_liveness()
+                live_status = liveness.get("status", "unknown")
+                if live_status == "alive":
+                    checks.append({
+                        "category": "API Server",
+                        "name": "Liveness Probe",
+                        "status": "PASS",
+                        "message": f"/health/live responsive (status={live_status})",
+                    })
+                else:
+                    checks.append({
+                        "category": "API Server",
+                        "name": "Liveness Probe",
+                        "status": "FAIL",
+                        "message": f"/health/live returned unexpected status: {live_status}",
+                    })
+            except ApiClientError as exc:
+                checks.append({
+                    "category": "API Server",
+                    "name": "Liveness Probe",
+                    "status": "FAIL",
+                    "message": f"/health/live probe failed: {exc}",
+                })
+
+            # 3. Readiness Probe & Deep Subsystem Checks
+            try:
+                readiness = client.check_readiness()
+                ready_status = readiness.get("status", "unknown")
+                subchecks = readiness.get("checks", {})
+                if ready_status == "ready":
+                    checks.append({
+                        "category": "API Server",
+                        "name": "Readiness Probe",
+                        "status": "PASS",
+                        "message": "All subsystems healthy (storage, registry, persistence)",
+                    })
+                else:
+                    checks.append({
+                        "category": "API Server",
+                        "name": "Readiness Probe",
+                        "status": "FAIL",
+                        "message": f"Service readiness degraded (status={ready_status})",
+                    })
+                for sub_name, sub_info in subchecks.items():
+                    sub_st = sub_info.get("status", "unknown")
+                    sub_err = sub_info.get("error", "")
+                    checks.append({
+                        "category": "Subsystems",
+                        "name": f"Subsystem: {sub_name}",
+                        "status": "PASS" if sub_st == "healthy" else "FAIL",
+                        "message": sub_err if sub_err else f"{sub_name} operational",
+                    })
+            except ApiClientError as exc:
+                checks.append({
+                    "category": "API Server",
+                    "name": "Readiness Probe",
+                    "status": "FAIL",
+                    "message": f"/health/ready probe failed: {exc}",
+                })
+
+            # 4. Telemetry & Metrics
+            try:
+                metrics = client.get_metrics()
+                total_q = metrics.get("total_queries", 0)
+                uptime = metrics.get("uptime_seconds", 0.0)
+                checks.append({
+                    "category": "Observability",
+                    "name": "Telemetry Engine",
+                    "status": "PASS",
+                    "message": f"Metrics reporting active ({total_q} queries, uptime {uptime:.1f}s)",
+                })
+            except ApiClientError as exc:
+                checks.append({
+                    "category": "Observability",
+                    "name": "Telemetry Engine",
+                    "status": "WARN",
+                    "message": f"Metrics query warning: {exc}",
+                })
+
+    else:
+        mode = "local"
+        settings = get_settings()
+
+        # 1. Python Runtime
+        py_ver = sys.version_info
+        py_str = f"{py_ver.major}.{py_ver.minor}.{py_ver.micro} ({platform.system()} {platform.machine()})"
+        if py_ver >= (3, 10):
+            checks.append({
+                "category": "Environment",
+                "name": "Python Runtime",
+                "status": "PASS",
+                "message": py_str,
+            })
+        else:
+            checks.append({
+                "category": "Environment",
+                "name": "Python Runtime",
+                "status": "FAIL",
+                "message": f"{py_str} - Python 3.10+ required",
+            })
+            recommendations.append("Upgrade Python to version 3.10 or higher.")
+
+        # 2. PyTorch Backend
+        try:
+            import torch
+
+            device = "CUDA" if torch.cuda.is_available() else "CPU"
+            checks.append({
+                "category": "Environment",
+                "name": "PyTorch Backend",
+                "status": "PASS",
+                "message": f"{torch.__version__} (Device: {device})",
+            })
+        except Exception as exc:
+            checks.append({
+                "category": "Environment",
+                "name": "PyTorch Backend",
+                "status": "FAIL",
+                "message": f"PyTorch import failed: {exc}",
+            })
+            recommendations.append(
+                "Install PyTorch with 'pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu'."
+            )
+
+        # 3. Core Dependencies
+        core_deps = [
+            ("chromadb", "chromadb"),
+            ("fastapi", "fastapi"),
+            ("streamlit", "streamlit"),
+            ("tiktoken", "tiktoken"),
+            ("sentence_transformers", "sentence-transformers"),
+        ]
+        missing_deps: list[str] = []
+        for mod_name, pkg_name in core_deps:
+            try:
+                __import__(mod_name)
+            except ImportError:
+                missing_deps.append(pkg_name)
+
+        if not missing_deps:
+            checks.append({
+                "category": "Environment",
+                "name": "Core Dependencies",
+                "status": "PASS",
+                "message": "chromadb, fastapi, streamlit, tiktoken, sentence-transformers available",
+            })
+        else:
+            checks.append({
+                "category": "Environment",
+                "name": "Core Dependencies",
+                "status": "FAIL",
+                "message": f"Missing packages: {', '.join(missing_deps)}",
+            })
+            recommendations.append("Run 'make install' or 'pip install -r requirements.txt' to install dependencies.")
+
+        # 4. Storage - Persistence Directory
+        persist_dir = Path(settings.chroma_persist_directory)
+        try:
+            if persist_dir.exists():
+                writable = os.access(persist_dir, os.W_OK)
+            else:
+                curr = persist_dir
+                while not curr.exists() and curr.parent != curr:
+                    curr = curr.parent
+                writable = os.access(curr, os.W_OK)
+
+            if writable:
+                checks.append({
+                    "category": "Storage",
+                    "name": "Chroma Persistence Dir",
+                    "status": "PASS",
+                    "message": f"{persist_dir} (writable)",
+                })
+            else:
+                checks.append({
+                    "category": "Storage",
+                    "name": "Chroma Persistence Dir",
+                    "status": "FAIL",
+                    "message": f"{persist_dir} is not writable",
+                })
+                recommendations.append(f"Grant write permissions to directory '{persist_dir}'.")
+        except Exception as exc:
+            checks.append({
+                "category": "Storage",
+                "name": "Chroma Persistence Dir",
+                "status": "FAIL",
+                "message": f"Directory check failed: {exc}",
+            })
+
+        # 5. Storage - Repository Registry
+        reg_path = Path(settings.registry_path)
+        try:
+            if reg_path.exists():
+                reg_writable = os.access(reg_path, os.W_OK) and os.access(reg_path, os.R_OK)
+                with open(reg_path, "r", encoding="utf-8") as f:
+                    json.load(f)
+                reg_status = "PASS" if reg_writable else "FAIL"
+                reg_msg = f"{reg_path} (valid JSON, {'writable' if reg_writable else 'read-only'})"
+            else:
+                curr = reg_path.parent
+                while not curr.exists() and curr.parent != curr:
+                    curr = curr.parent
+                reg_writable = os.access(curr, os.W_OK)
+                reg_status = "PASS" if reg_writable else "FAIL"
+                reg_msg = f"{reg_path} (parent {'writable' if reg_writable else 'not writable'})"
+
+            checks.append({
+                "category": "Storage",
+                "name": "Repository Registry",
+                "status": reg_status,
+                "message": reg_msg,
+            })
+            if reg_status == "FAIL":
+                recommendations.append(f"Ensure registry file or parent directory '{reg_path}' is writable.")
+        except Exception as exc:
+            checks.append({
+                "category": "Storage",
+                "name": "Repository Registry",
+                "status": "FAIL",
+                "message": f"Registry check failed: {exc}",
+            })
+            recommendations.append(f"Fix corrupt or unreadable registry at '{reg_path}'.")
+
+        # 6. Storage - Vector Store Engine
+        try:
+            from src.storage.chroma_store import get_vector_store
+
+            storage = get_vector_store()
+            cols = storage.list_collections()
+            checks.append({
+                "category": "Storage",
+                "name": "Vector Store Engine",
+                "status": "PASS",
+                "message": f"{storage.__class__.__name__} ({len(cols)} collections)",
+            })
+        except Exception as exc:
+            checks.append({
+                "category": "Storage",
+                "name": "Vector Store Engine",
+                "status": "FAIL",
+                "message": f"Vector store initialization failed: {exc}",
+            })
+            recommendations.append("Verify Chroma vector database path and database locks.")
+
+        # 7. Embedding - Code Embedding Model Config
+        try:
+            from src.embedding.embedder import MODEL_NAME
+
+            checks.append({
+                "category": "Embedding",
+                "name": "Code Embedding Model",
+                "status": "PASS",
+                "message": f"Configured: {MODEL_NAME}",
+            })
+        except Exception as exc:
+            checks.append({
+                "category": "Embedding",
+                "name": "Code Embedding Model",
+                "status": "FAIL",
+                "message": f"Embedder configuration error: {exc}",
+            })
+
+        # 8. LLM Provider Configuration
+        raw_llm = getattr(args, "llm", None) or settings.llm_provider
+        resolved_llm = raw_llm.lower().strip()
+        if resolved_llm == "fake":
+            checks.append({
+                "category": "LLM",
+                "name": "LLM Provider",
+                "status": "PASS",
+                "message": "FakeLLMProvider active (testing/offline mode)",
+            })
+        elif resolved_llm == "gemini":
+            if settings.gemini_api_key or os.environ.get("GEMINI_API_KEY"):
+                checks.append({
+                    "category": "LLM",
+                    "name": "LLM Provider",
+                    "status": "PASS",
+                    "message": f"GeminiLLMProvider (model: {settings.gemini_model}, API key configured)",
+                })
+            else:
+                checks.append({
+                    "category": "LLM",
+                    "name": "LLM Provider",
+                    "status": "WARN",
+                    "message": "GeminiLLMProvider (GEMINI_API_KEY unset; queries will fail without key or fake provider)",
+                })
+                recommendations.append("Set GEMINI_API_KEY in .env or run with '--llm fake' for offline testing.")
+        else:
+            try:
+                from src.llm.base import get_llm_provider
+
+                llm = get_llm_provider(resolved_llm)
+                checks.append({
+                    "category": "LLM",
+                    "name": "LLM Provider",
+                    "status": "PASS",
+                    "message": f"{llm.__class__.__name__} active",
+                })
+            except Exception as exc:
+                checks.append({
+                    "category": "LLM",
+                    "name": "LLM Provider",
+                    "status": "FAIL",
+                    "message": f"LLM provider initialization error: {exc}",
+                })
+
+        # 9. GitHub API Token & Rate Limits
+        if settings.github_token or os.environ.get("GITHUB_TOKEN"):
+            checks.append({
+                "category": "GitHub",
+                "name": "GitHub API Token",
+                "status": "PASS",
+                "message": "GITHUB_TOKEN configured (5,000 req/hr rate limit)",
+            })
+        else:
+            checks.append({
+                "category": "GitHub",
+                "name": "GitHub API Token",
+                "status": "WARN",
+                "message": "GITHUB_TOKEN unset (unauthenticated 60 req/hr rate limit)",
+            })
+            recommendations.append("Set GITHUB_TOKEN in .env to prevent rate limit throttling during indexing.")
+
+    # Calculate Summary
+    passed = sum(1 for c in checks if c["status"] == "PASS")
+    warnings = sum(1 for c in checks if c["status"] == "WARN")
+    failures = sum(1 for c in checks if c["status"] == "FAIL")
+
+    if failures > 0:
+        overall_status = "unhealthy"
+        exit_code = 1
+    elif warnings > 0:
+        overall_status = "warning"
+        exit_code = 0
+    else:
+        overall_status = "healthy"
+        exit_code = 0
+
+    if args.json:
+        report = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "mode": mode,
+            "overall_status": overall_status,
+            "passed": passed,
+            "warnings": warnings,
+            "failures": failures,
+            "checks": checks,
+            "recommendations": recommendations,
+        }
+        print(json.dumps(report, indent=2))
+        return exit_code
+
+    # Render formatted CLI table
+    print("AI Codebase Intelligence Platform - Diagnostic Doctor")
+    print("=" * 80)
+    print(f"{'Category':<15} {'Check':<28} {'Status':<8} {'Details':<27}")
+    print("-" * 80)
+    for c in checks:
+        cat = c["category"]
+        name = c["name"]
+        st = c["status"]
+        msg = c["message"]
+        print(f"{cat:<15} {name:<28} {st:<8} {msg}")
+    print("-" * 80)
+    res_str = f"Diagnostic Result: {passed} passed, {warnings} warning{'s' if warnings != 1 else ''}, {failures} failure{'s' if failures != 1 else ''} [{overall_status.upper()}]"
+    print(res_str)
+
+    if getattr(args, "verbose", False) and recommendations:
+        print("\nTroubleshooting & Recommendations:")
+        for idx, rec in enumerate(recommendations, 1):
+            print(f"  {idx}. {rec}")
+
+    return exit_code
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build and configure the CLI argument parser."""
     parser = argparse.ArgumentParser(
@@ -910,6 +1330,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_audit.add_argument("--json", action="store_true", help="Output audit report as JSON")
 
+    # doctor
+    p_doctor = subparsers.add_parser(
+        "doctor",
+        help="Run comprehensive diagnostic health and environment checks",
+    )
+    p_doctor.add_argument(
+        "--llm",
+        default=None,
+        choices=["fake", "gemini"],
+        help="Override LLM provider for diagnostic verification",
+    )
+    p_doctor.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Display detailed troubleshooting recommendations",
+    )
+    p_doctor.add_argument("--json", action="store_true", help="Output diagnostic report as JSON")
+
     return parser
 
 
@@ -935,6 +1374,7 @@ def main(argv: list[str] | None = None) -> int:
         "delete": handle_delete,
         "metrics": handle_metrics,
         "audit": handle_audit,
+        "doctor": handle_doctor,
     }
 
     handler = handlers.get(args.subcommand)

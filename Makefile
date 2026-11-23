@@ -1,5 +1,5 @@
 # AI Codebase Intelligence Platform - Developer Tooling Makefile
-.PHONY: help install test test-unit test-integration api ui eval cli metrics audit docker-build docker-up docker-down clean lint
+.PHONY: help install test test-unit test-integration api ui eval cli metrics audit doctor docker-build docker-up docker-down clean lint
 
 PYTHON ?= python3
 PIP ?= pip
@@ -21,6 +21,7 @@ help:
 	@echo "  make cli ARGS=\"...\"    Run developer CLI tool (e.g. ARGS=\"status\" or ARGS=\"repos\")"
 	@echo "  make metrics ARGS=\"...\" Run metrics/telemetry CLI (e.g. ARGS=\"--prometheus\" or ARGS=\"--json\")"
 	@echo "  make audit ARGS=\"...\"   Inspect ingestion audit log (e.g. ARGS=\"owner/repo\")"
+	@echo "  make doctor ARGS=\"...\"  Run platform diagnostic health and configuration doctor"
 	@echo "  make docker-build       Build production Docker container image"
 	@echo "  make docker-up          Launch container topology with docker-compose"
 	@echo "  make docker-down        Stop docker-compose containers"
@@ -58,6 +59,9 @@ metrics:
 
 audit:
 	$(PYTHON) -m src.cli.main audit $(ARGS)
+
+doctor:
+	$(PYTHON) -m src.cli.main doctor $(ARGS)
 
 docker-build:
 	docker build -t ai-codebase-intel:latest .

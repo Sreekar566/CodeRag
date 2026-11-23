@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -56,6 +57,7 @@ def test_cli_help(capsys: pytest.CaptureFixture) -> None:
     assert "delete" in captured.out
     assert "metrics" in captured.out
     assert "audit" in captured.out
+    assert "doctor" in captured.out
 
 
 def test_cli_no_subcommand(capsys: pytest.CaptureFixture) -> None:
@@ -1014,3 +1016,142 @@ def test_cli_audit_remote_error(mock_audit: MagicMock, capsys: pytest.CaptureFix
     assert code == 1
     captured = capsys.readouterr()
     assert "Error fetching audit log from API" in captured.err
+
+
+def test_cli_doctor_local_healthy(capsys: pytest.CaptureFixture) -> None:
+    code = main(["doctor", "--llm", "fake"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "AI Codebase Intelligence Platform - Diagnostic Doctor" in captured.out
+    assert "Python Runtime" in captured.out
+    assert "PyTorch Backend" in captured.out
+    assert "Core Dependencies" in captured.out
+    assert "Chroma Persistence Dir" in captured.out
+    assert "Repository Registry" in captured.out
+    assert "Vector Store Engine" in captured.out
+    assert "Diagnostic Result:" in captured.out
+
+
+def test_cli_doctor_local_json(capsys: pytest.CaptureFixture) -> None:
+    code = main(["doctor", "--llm", "fake", "--json"])
+    assert code == 0
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert data["mode"] == "local"
+    assert data["failures"] == 0
+    assert data["passed"] > 0
+    assert "checks" in data
+    check_names = [c["name"] for c in data["checks"]]
+    assert "Python Runtime" in check_names
+    assert "Vector Store Engine" in check_names
+
+
+def test_cli_doctor_local_verbose(capsys: pytest.CaptureFixture) -> None:
+    code = main(["doctor", "--llm", "fake", "--verbose"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "AI Codebase Intelligence Platform - Diagnostic Doctor" in captured.out
+
+
+def test_cli_doctor_local_storage_failure(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    # Force os.access on the persistence directory to return False
+    orig_access = os.access
+
+    def mock_access(path, mode, *args, **kwargs):
+        if "chroma" in str(path).lower():
+            return False
+        return orig_access(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(os, "access", mock_access)
+
+    code = main(["doctor", "--llm", "fake"])
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "FAIL" in captured.out
+    assert "UNHEALTHY" in captured.out
+
+
+@patch("src.ui.client.ApiClient.health")
+@patch("src.ui.client.ApiClient.check_liveness")
+@patch("src.ui.client.ApiClient.check_readiness")
+@patch("src.ui.client.ApiClient.get_metrics")
+def test_cli_doctor_remote_healthy(
+    mock_metrics: MagicMock,
+    mock_readiness: MagicMock,
+    mock_liveness: MagicMock,
+    mock_health: MagicMock,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    mock_health.return_value = {
+        "status": "ok",
+        "app_name": "AI Codebase Intelligence Platform",
+        "version": "0.1.0",
+        "vector_store_type": "ChromaVectorStore",
+    }
+    mock_liveness.return_value = {"status": "alive", "timestamp": "2026-11-23T10:00:00Z"}
+    mock_readiness.return_value = {
+        "status": "ready",
+        "checks": {
+            "storage": {"status": "healthy"},
+            "registry": {"status": "healthy"},
+            "persistence": {"status": "healthy"},
+        },
+    }
+    mock_metrics.return_value = {"total_queries": 42, "uptime_seconds": 123.4}
+
+    code = main(["--api-url", "http://localhost:8000", "doctor"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "API Connectivity" in captured.out
+    assert "Liveness Probe" in captured.out
+    assert "Readiness Probe" in captured.out
+    assert "Telemetry Engine" in captured.out
+    assert "Diagnostic Result:" in captured.out
+    assert "HEALTHY" in captured.out
+
+
+@patch("src.ui.client.ApiClient.health")
+@patch("src.ui.client.ApiClient.check_liveness")
+@patch("src.ui.client.ApiClient.check_readiness")
+@patch("src.ui.client.ApiClient.get_metrics")
+def test_cli_doctor_remote_unready(
+    mock_metrics: MagicMock,
+    mock_readiness: MagicMock,
+    mock_liveness: MagicMock,
+    mock_health: MagicMock,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    mock_health.return_value = {
+        "status": "ok",
+        "app_name": "AI Codebase Intelligence Platform",
+        "version": "0.1.0",
+        "vector_store_type": "ChromaVectorStore",
+    }
+    mock_liveness.return_value = {"status": "alive", "timestamp": "2026-11-23T10:00:00Z"}
+    mock_readiness.return_value = {
+        "status": "unhealthy",
+        "checks": {
+            "storage": {"status": "unhealthy", "error": "Chroma lock conflict"},
+            "registry": {"status": "healthy"},
+            "persistence": {"status": "healthy"},
+        },
+    }
+    mock_metrics.return_value = {"total_queries": 0, "uptime_seconds": 10.0}
+
+    code = main(["--api-url", "http://localhost:8000", "doctor"])
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "FAIL" in captured.out
+    assert "UNHEALTHY" in captured.out
+    assert "Chroma lock conflict" in captured.out
+
+
+@patch("src.ui.client.ApiClient.health", side_effect=ApiClientError("Connection refused"))
+def test_cli_doctor_remote_connection_error(mock_health: MagicMock, capsys: pytest.CaptureFixture) -> None:
+    code = main(["--api-url", "http://localhost:8000", "doctor"])
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "API Connectivity" in captured.out
+    assert "FAIL" in captured.out
+    assert "Connection failed" in captured.out
+
