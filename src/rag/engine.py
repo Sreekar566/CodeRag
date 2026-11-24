@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.config import get_settings
 from src.storage.base import VectorStore, sanitize_collection_name
 from src.storage.chroma_store import get_vector_store
 from src.llm.base import LLMProvider, get_llm_provider
@@ -71,19 +72,24 @@ class RAGEngine:
         vector_store: VectorStore | None = None,
         llm_provider: LLMProvider | None = None,
         registry: RepoRegistry | None = None,
-        default_collection: str = "codebase",
+        default_collection: str | None = None,
         system_prompt: str | None = None,
-        max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
+        max_context_tokens: int | None = None,
         rerank: bool = True,
         merge_overlapping: bool = True,
         reorder_context: bool = True,
     ):
+        settings = get_settings()
         self.vector_store = vector_store or get_vector_store()
         self.llm_provider = llm_provider or get_llm_provider()
         self.registry = registry
-        self.default_collection = default_collection
+        self.default_collection = default_collection or settings.default_collection_name
         self.system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
-        self.max_context_tokens = max_context_tokens
+        self.max_context_tokens = (
+            max_context_tokens
+            if max_context_tokens is not None
+            else settings.max_context_tokens
+        )
         self.rerank = rerank
         self.merge_overlapping = merge_overlapping
         self.reorder_context = reorder_context

@@ -89,6 +89,15 @@ class Settings(BaseSettings):
     )
 
     # -------------------------------------------------------------------------
+    # Embedding Model
+    # -------------------------------------------------------------------------
+    embedding_model: str = Field(
+        default="flax-sentence-embeddings/st-codesearch-distilroberta-base",
+        validation_alias=AliasChoices("embedding_model"),
+        description="SentenceTransformer model identifier for code embedding",
+    )
+
+    # -------------------------------------------------------------------------
     # LLM Provider
     # -------------------------------------------------------------------------
     llm_provider: str | None = Field(
@@ -252,6 +261,14 @@ class Settings(BaseSettings):
         cleaned = v.strip()
         return cleaned if cleaned else None
 
+    @field_validator("embedding_model")
+    @classmethod
+    def validate_embedding_model(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("embedding_model cannot be empty or whitespace")
+        return cleaned
+
     @field_validator("gemini_model")
     @classmethod
     def validate_gemini_model(cls, v: str) -> str:
@@ -330,6 +347,10 @@ class Settings(BaseSettings):
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError(
                 f"chunk_overlap ({self.chunk_overlap}) must be less than chunk_size ({self.chunk_size})"
+            )
+        if self.chunk_size > self.max_context_tokens:
+            raise ValueError(
+                f"chunk_size ({self.chunk_size}) cannot exceed max_context_tokens ({self.max_context_tokens})"
             )
         return self
 

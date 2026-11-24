@@ -28,6 +28,7 @@ def test_default_settings():
     assert settings.registry_path == "./data/registry.json"
     assert settings.default_collection_name == "codebase"
     assert settings.storage_batch_size == 500
+    assert settings.embedding_model == "flax-sentence-embeddings/st-codesearch-distilroberta-base"
 
     assert settings.gemini_model == "gemini-3.8-flash"
     assert settings.github_api_base == "https://api.github.com"
@@ -57,6 +58,7 @@ def test_env_var_overrides(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_secrettoken")
     monkeypatch.setenv("CHUNK_SIZE", "500")
     monkeypatch.setenv("CHUNK_OVERLAP", "100")
+    monkeypatch.setenv("EMBEDDING_MODEL", "custom-model/code-embed")
 
     settings = get_settings()
 
@@ -74,6 +76,7 @@ def test_env_var_overrides(monkeypatch):
     assert settings.github_token == "ghp_secrettoken"
     assert settings.chunk_size == 500
     assert settings.chunk_overlap == 100
+    assert settings.embedding_model == "custom-model/code-embed"
 
 
 def test_invalid_port_validation():
@@ -312,4 +315,50 @@ def test_is_local_storage_property():
     """Verify is_local_storage property."""
     s = Settings(chroma_persist_directory="./data/chroma")
     assert s.is_local_storage is True
+
+
+def test_embedding_model_validation():
+    """Verify embedding_model rejects empty or whitespace strings."""
+    with pytest.raises(ValidationError) as exc:
+        Settings(embedding_model="   ")
+    assert "embedding_model cannot be empty or whitespace" in str(exc.value)
+
+
+def test_chunk_size_exceeds_context_budget_validation():
+    """Verify chunk_size cannot exceed max_context_tokens."""
+    with pytest.raises(ValidationError) as exc:
+        Settings(chunk_size=3000, max_context_tokens=2048)
+    assert "cannot exceed max_context_tokens" in str(exc.value)
+
+
+def test_module_settings_propagation(monkeypatch):
+    """Verify chunker, context assembler, and embedder pick up configuration overrides."""
+    monkeypatch.setenv("CHUNK_SIZE", "650")
+    monkeypatch.setenv("CHUNK_OVERLAP", "120")
+    monkeypatch.setenv("BOUNDARY_SEARCH_WINDOW", "8")
+    monkeypatch.setenv("MAX_CONTEXT_TOKENS", "4096")
+    monkeypatch.setenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+
+    from src.ingestion.chunker import (
+        get_default_chunk_size,
+        get_default_overlap,
+        get_default_boundary_window,
+        CodeChunker,
+    )
+    from src.rag.context_assembler import get_default_max_context_tokens, ContextAssembler
+    from src.embedding.embedder import get_embedding_model_name
+
+    assert get_default_chunk_size() == 650
+    assert get_default_overlap() == 120
+    assert get_default_boundary_window() == 8
+    chunker = CodeChunker(chunk_size=None, overlap=None, boundary_search_window=None)
+    assert chunker.chunk_size == 650
+    assert chunker.overlap == 120
+    assert chunker.boundary_search_window == 8
+
+    assert get_default_max_context_tokens() == 4096
+    assembler = ContextAssembler()
+    assert assembler.max_context_tokens == 4096
+
+    assert get_embedding_model_name() == "sentence-transformers/all-MiniLM-L6-v2"
 

@@ -8,25 +8,40 @@
 from __future__ import annotations
 from typing import Any
 from sentence_transformers import SentenceTransformer
+from src.config import get_settings
 from src.ingestion.chunker import detect_language
 
-MODEL_NAME = "flax-sentence-embeddings/st-codesearch-distilroberta-base"
+DEFAULT_EMBEDDING_MODEL = "flax-sentence-embeddings/st-codesearch-distilroberta-base"
+
+
+def get_embedding_model_name() -> str:
+    """Resolve configured embedding model identifier from platform Settings."""
+    try:
+        return get_settings().embedding_model
+    except Exception:
+        return DEFAULT_EMBEDDING_MODEL
+
+
+MODEL_NAME = get_embedding_model_name()
 
 _model: SentenceTransformer | None = None
+_loaded_model_name: str | None = None
 
 
-def get_model() -> SentenceTransformer:
+def get_model(model_name: str | None = None) -> SentenceTransformer:
     """
     Lazily load the SentenceTransformer model to avoid expensive downloads/loads
     at module import time. Caches the loaded model instance.
     """
-    global _model
-    if _model is None:
-        _model = SentenceTransformer(MODEL_NAME)
+    global _model, _loaded_model_name
+    target_name = model_name or get_embedding_model_name()
+    if _model is None or _loaded_model_name != target_name:
+        _model = SentenceTransformer(target_name)
+        _loaded_model_name = target_name
     return _model
 
 
-def embed_chunks(chunks: list[dict], model: Any = None) -> list[dict]:
+def embed_chunks(chunks: list[dict[str, Any]], model: Any = None) -> list[dict[str, Any]]:
     """
     Takes the chunk dicts produced by chunk_text() and adds an "embedding"
     vector to each one, in place. Also ensures each chunk has "language" metadata.
@@ -88,7 +103,9 @@ def embed_texts(texts: list[str], model: Any = None) -> list[list[float]]:
 
 
 def __getattr__(name: str) -> Any:
-    """Support accessing embedder.model lazily without breaking backwards compatibility."""
+    """Support accessing embedder attributes lazily without breaking backwards compatibility."""
     if name == "model":
         return get_model()
+    if name == "MODEL_NAME":
+        return get_embedding_model_name()
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

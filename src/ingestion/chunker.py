@@ -9,12 +9,41 @@ from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from typing import Any
 
-# Default chunk size and overlap in approximate tokens (whitespace-separated words)
-CHUNK_SIZE = 400
-OVERLAP = 50
+from src.config import get_settings
 
-# How far (in lines) to search outward for a nearby blank line when snapping chunk boundaries
-BOUNDARY_SEARCH_WINDOW = 5
+# Default chunk size and overlap in approximate tokens (whitespace-separated words)
+DEFAULT_CHUNK_SIZE = 400
+DEFAULT_OVERLAP = 50
+DEFAULT_BOUNDARY_SEARCH_WINDOW = 5
+
+
+def get_default_chunk_size() -> int:
+    """Resolve default chunk size from application settings or fallback."""
+    try:
+        return get_settings().chunk_size
+    except Exception:
+        return DEFAULT_CHUNK_SIZE
+
+
+def get_default_overlap() -> int:
+    """Resolve default chunk overlap from application settings or fallback."""
+    try:
+        return get_settings().chunk_overlap
+    except Exception:
+        return DEFAULT_OVERLAP
+
+
+def get_default_boundary_window() -> int:
+    """Resolve default boundary search window from application settings or fallback."""
+    try:
+        return get_settings().boundary_search_window
+    except Exception:
+        return DEFAULT_BOUNDARY_SEARCH_WINDOW
+
+
+CHUNK_SIZE = DEFAULT_CHUNK_SIZE
+OVERLAP = DEFAULT_OVERLAP
+BOUNDARY_SEARCH_WINDOW = DEFAULT_BOUNDARY_SEARCH_WINDOW
 
 EXTENSION_TO_LANGUAGE: dict[str, str] = {
     ".py": "python",
@@ -178,11 +207,18 @@ class CodeChunker:
     Configurable chunker for source code files using word count windows
     and blank-line boundary snapping.
     """
-    chunk_size: int = CHUNK_SIZE
-    overlap: int = OVERLAP
-    boundary_search_window: int = BOUNDARY_SEARCH_WINDOW
+    chunk_size: int = DEFAULT_CHUNK_SIZE
+    overlap: int = DEFAULT_OVERLAP
+    boundary_search_window: int = DEFAULT_BOUNDARY_SEARCH_WINDOW
 
     def __post_init__(self) -> None:
+        if self.chunk_size is None:
+            self.chunk_size = get_default_chunk_size()
+        if self.overlap is None:
+            self.overlap = get_default_overlap()
+        if self.boundary_search_window is None:
+            self.boundary_search_window = get_default_boundary_window()
+
         if self.chunk_size <= 0:
             raise ValueError(f"chunk_size must be positive, got {self.chunk_size}")
         if self.overlap < 0:
@@ -270,9 +306,9 @@ class CodeChunker:
 def chunk_text(
     text: str,
     path: str,
-    chunk_size: int = CHUNK_SIZE,
-    overlap: int = OVERLAP,
-    boundary_window: int = BOUNDARY_SEARCH_WINDOW,
+    chunk_size: int | None = None,
+    overlap: int | None = None,
+    boundary_window: int | None = None,
     language: str | None = None,
 ) -> list[dict[str, Any]]:
     """
@@ -282,9 +318,16 @@ def chunk_text(
     Returns a list of dicts like:
         {"path": "app/models.py", "start_line": 1, "end_line": 42, "text": "...", "language": "python"}
     """
+    eff_chunk_size = chunk_size if chunk_size is not None else get_default_chunk_size()
+    eff_overlap = overlap if overlap is not None else get_default_overlap()
+    eff_boundary = (
+        boundary_window
+        if boundary_window is not None
+        else get_default_boundary_window()
+    )
     chunker = CodeChunker(
-        chunk_size=chunk_size,
-        overlap=overlap,
-        boundary_search_window=boundary_window,
+        chunk_size=eff_chunk_size,
+        overlap=eff_overlap,
+        boundary_search_window=eff_boundary,
     )
     return chunker.chunk(text, path, language=language)

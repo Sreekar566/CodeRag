@@ -1047,6 +1047,18 @@ def test_cli_doctor_local_healthy(capsys: pytest.CaptureFixture) -> None:
     assert "Chroma Persistence Dir" in captured.out
     assert "Repository Registry" in captured.out
     assert "Vector Store Engine" in captured.out
+    assert "Code Embedding Model" in captured.out
+    assert "Diagnostic Result:" in captured.out
+
+
+def test_cli_doctor_local_default_llm_resolution(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    """Verify doctor command resolves default effective LLM provider without --llm flag and without crashing."""
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    code = main(["doctor"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Code Embedding Model" in captured.out
     assert "Diagnostic Result:" in captured.out
 
 

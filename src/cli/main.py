@@ -1047,13 +1047,14 @@ def handle_doctor(args: argparse.Namespace) -> int:
 
         # 7. Embedding - Code Embedding Model Config
         try:
-            from src.embedding.embedder import MODEL_NAME
+            from src.embedding.embedder import MODEL_NAME, get_embedding_model_name
 
+            embed_model = getattr(settings, "embedding_model", None) or get_embedding_model_name()
             checks.append({
                 "category": "Embedding",
                 "name": "Code Embedding Model",
                 "status": "PASS",
-                "message": f"Configured: {MODEL_NAME}",
+                "message": f"Configured: {embed_model}",
             })
         except Exception as exc:
             checks.append({
@@ -1064,8 +1065,8 @@ def handle_doctor(args: argparse.Namespace) -> int:
             })
 
         # 8. LLM Provider Configuration
-        raw_llm = getattr(args, "llm", None) or settings.llm_provider
-        resolved_llm = raw_llm.lower().strip()
+        raw_llm = getattr(args, "llm", None) or settings.effective_llm_provider
+        resolved_llm = raw_llm.lower().strip() if raw_llm else "fake"
         if resolved_llm == "fake":
             checks.append({
                 "category": "LLM",

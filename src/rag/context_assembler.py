@@ -15,7 +15,17 @@ from src.rag.tokenizer import count_tokens, estimate_chunk_tokens, truncate_text
 
 logger = logging.getLogger(__name__)
 
+from src.config import get_settings
+
 DEFAULT_MAX_CONTEXT_TOKENS = 2048
+
+
+def get_default_max_context_tokens() -> int:
+    """Resolve default maximum context tokens from application settings or fallback."""
+    try:
+        return get_settings().max_context_tokens
+    except Exception:
+        return DEFAULT_MAX_CONTEXT_TOKENS
 
 
 @dataclass
@@ -78,14 +88,18 @@ class ContextAssembler:
 
     def __init__(
         self,
-        max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
+        max_context_tokens: int | None = None,
         rerank: bool = True,
         merge_overlapping: bool = True,
         reorder_lost_in_the_middle: bool = True,
         allow_truncation: bool = True,
         min_chunk_tokens: int = 50,
     ):
-        self.max_context_tokens = max_context_tokens
+        self.max_context_tokens = (
+            max_context_tokens
+            if max_context_tokens is not None
+            else get_default_max_context_tokens()
+        )
         self.rerank = rerank
         self.merge_overlapping = merge_overlapping
         self.reorder_lost_in_the_middle = reorder_lost_in_the_middle
