@@ -247,6 +247,7 @@ class IncrementalIndexer:
         prev_meta: RepositoryMetadata | None,
         force: bool,
         latest_commit_sha: str | None = None,
+        purge_modified: bool = True,
     ) -> tuple[list[str], list[str], list[str], list[str], int, bool, bool]:
         """
         Compute file diffs against previously indexed SHAs and purge obsolete chunks.
@@ -265,7 +266,7 @@ class IncrementalIndexer:
             return files_to_fetch, list(files_to_fetch), [], [], 0, True, False
 
         changes = detect_changes(filtered_items, prev_meta.file_shas)
-        if not changes.has_changes and latest_commit_sha == prev_meta.commit_sha:
+        if not changes.has_changes and prev_meta.status == "ready" and latest_commit_sha == prev_meta.commit_sha:
             return [], [], [], [], len(changes.unchanged_files), False, True
 
         files_deleted = changes.deleted_files
@@ -274,8 +275,10 @@ class IncrementalIndexer:
         unchanged_count = len(changes.unchanged_files)
         files_to_fetch = files_added + files_modified
 
-        # Remove chunks for deleted and modified files from vector store
-        self._purge_chunks_for_files(target_collection, files_deleted + files_modified)
+        # Remove chunks for deleted (and optionally modified) files from vector store
+        to_purge = files_deleted + files_modified if purge_modified else files_deleted
+        if to_purge:
+            self._purge_chunks_for_files(target_collection, to_purge)
 
         return (
             files_to_fetch,
@@ -286,6 +289,36 @@ class IncrementalIndexer:
             False,
             False,
         )
+
+    def _fetch_file_contents_with_failures(
+        self,
+        owner: str,
+        repo: str,
+        token: str | None,
+        files_to_fetch: list[str],
+    ) -> tuple[list[dict[str, str]], list[str], list[str]]:
+        """
+        Fetch file contents from GitHub REST API for files to process.
+        Returns (fetched_files, skipped_files, failed_files) where failed_files
+        tracks paths that raised an error during fetch (as opposed to binary files).
+        """
+        fetched_files: list[dict[str, str]] = []
+        skipped_files: list[str] = []
+        failed_files: list[str] = []
+
+        for path in files_to_fetch:
+            try:
+                content = get_file_content(owner, repo, path, token)
+                if content is not None:
+                    fetched_files.append({"path": path, "content": content})
+                else:
+                    skipped_files.append(path)
+            except Exception as e:
+                logger.warning(f"Failed to fetch content for {path}: {e}")
+                skipped_files.append(path)
+                failed_files.append(path)
+
+        return fetched_files, skipped_files, failed_files
 
     def _fetch_file_contents(
         self,
@@ -298,20 +331,12 @@ class IncrementalIndexer:
         Fetch file contents from GitHub REST API for files to process.
         Returns (fetched_files, skipped_files).
         """
-        fetched_files: list[dict[str, str]] = []
-        skipped_files: list[str] = []
-
-        for path in files_to_fetch:
-            try:
-                content = get_file_content(owner, repo, path, token)
-                if content is not None:
-                    fetched_files.append({"path": path, "content": content})
-                else:
-                    skipped_files.append(path)
-            except Exception as e:
-                logger.warning(f"Failed to fetch content for {path}: {e}")
-                skipped_files.append(path)
-
+        fetched_files, skipped_files, _ = self._fetch_file_contents_with_failures(
+            owner=owner,
+            repo=repo,
+            token=token,
+            files_to_fetch=files_to_fetch,
+        )
         return fetched_files, skipped_files
 
     def _chunk_embed_and_store(
@@ -427,7 +452,7 @@ class IncrementalIndexer:
                 latest_commit_sha=latest_commit_sha,
             )
 
-            # Step 4: Determine file changes and synchronize vector storage
+            # Step 4: Determine file changes and purge deleted files
             (
                 files_to_fetch,
                 files_added,
@@ -442,6 +467,7 @@ class IncrementalIndexer:
                 prev_meta=prev_meta,
                 force=force,
                 latest_commit_sha=latest_commit_sha,
+                purge_modified=False,
             )
 
             if is_delta_unchanged:
@@ -466,12 +492,19 @@ class IncrementalIndexer:
                 )
 
             # Step 5: Fetch content for delta files
-            fetched_files, skipped_files = self._fetch_file_contents(
+            fetched_files, skipped_files, failed_files = self._fetch_file_contents_with_failures(
                 owner=owner,
                 repo=repo,
                 token=token,
                 files_to_fetch=files_to_fetch,
             )
+            failed_set = set(failed_files)
+
+            # Purge old chunks for modified files only when they did not fail to fetch
+            # (so transient fetch errors do not destroy previously indexed chunks)
+            modified_to_purge = [p for p in files_modified if p not in failed_set]
+            if modified_to_purge:
+                self._purge_chunks_for_files(target_collection, modified_to_purge)
 
             # Step 6: Chunk, embed, and store delta chunks
             model = embedder_model if embedder_model is not None else self.embedder_model
@@ -483,16 +516,30 @@ class IncrementalIndexer:
             )
             total_chunks = self.vector_store.count(target_collection)
 
-            # Step 7: Update registry record
+            # Step 7: Update registry record without poisoning SHAs for failed fetches
+            if failed_set:
+                effective_prev_shas = {} if is_initial_index else (prev_meta.file_shas if prev_meta else {})
+                recorded_file_shas: dict[str, str] = {}
+                for path, sha in current_file_shas.items():
+                    if path in failed_set:
+                        if path in effective_prev_shas:
+                            recorded_file_shas[path] = effective_prev_shas[path]
+                    else:
+                        recorded_file_shas[path] = sha
+                recorded_commit_sha = None if is_initial_index else (prev_meta.commit_sha if prev_meta else None)
+            else:
+                recorded_file_shas = current_file_shas
+                recorded_commit_sha = latest_commit_sha
+
             self._update_registry_metadata(
                 owner=owner,
                 repo=repo,
                 target_collection=target_collection,
                 branch=resolved_branch,
-                latest_commit_sha=latest_commit_sha,
-                file_count=len(filtered_items),
+                latest_commit_sha=recorded_commit_sha,
+                file_count=len(recorded_file_shas),
                 chunk_count=total_chunks,
-                current_file_shas=current_file_shas,
+                current_file_shas=recorded_file_shas,
                 audit_log=audit_log,
             )
 
@@ -503,7 +550,7 @@ class IncrementalIndexer:
                 repo=repo,
                 target_collection=target_collection,
                 branch=resolved_branch,
-                latest_commit_sha=latest_commit_sha,
+                latest_commit_sha=recorded_commit_sha,
                 status=status_str,
                 files_processed=len(fetched_files),
                 chunks_stored=chunks_stored,

@@ -159,6 +159,8 @@ class RepoRegistry:
                 meta.status = status
                 if error is not None:
                     meta.error = error
+                elif status != "failed":
+                    meta.error = None
                 if chunk_count is not None:
                     meta.chunk_count = chunk_count
                 self._save()

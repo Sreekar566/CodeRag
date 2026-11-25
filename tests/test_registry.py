@@ -198,3 +198,24 @@ def test_concurrent_registry_writes(tmp_path):
     with open(storage_file, "r", encoding="utf-8") as f:
         data = json.load(f)
     assert len(data["repositories"]) == 50
+
+
+def test_update_status_clears_error_on_recovery():
+    reg = RepoRegistry(storage_path=None)
+    reg.register(RepositoryMetadata(owner="org", repo="app", collection_name="org_app"))
+
+    reg.update_status("org", "app", status="failed", error="Connection reset")
+    failed = reg.get("org/app")
+    assert failed.status == "failed"
+    assert failed.error == "Connection reset"
+
+    reg.update_status("org", "app", status="indexing")
+    retrying = reg.get("org/app")
+    assert retrying.status == "indexing"
+    assert retrying.error is None
+
+    reg.update_status("org", "app", status="failed", error="Timeout")
+    reg.update_status("org", "app", status="ready")
+    recovered = reg.get("org/app")
+    assert recovered.status == "ready"
+    assert recovered.error is None

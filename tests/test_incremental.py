@@ -460,3 +460,165 @@ def test_fetch_file_contents_with_failures(mock_content):
     assert skipped == ["none.py", "bad.py"]
 
 
+@patch("src.registry.incremental.get_latest_commit_sha")
+@patch("src.registry.incremental.get_repo_tree")
+@patch("src.registry.incremental.audit_filter_files")
+@patch("src.registry.incremental.get_file_content")
+def test_incremental_indexer_failed_fetch_does_not_poison_shas_and_retries(
+    mock_get_content, mock_audit_filter, mock_get_tree, mock_get_sha
+):
+    """
+    Ensure transient fetch failures during delta updates neither purge existing chunks
+    nor record unindexed SHAs / commit_sha, allowing subsequent runs to retry cleanly.
+    """
+    from src.observability.models import IngestionAuditLog
+
+    store = InMemoryVectorStore()
+    registry = RepoRegistry(storage_path=None)
+    mock_model = MagicMock()
+    mock_model.encode.return_value = np.array([[0.1, 0.2]])
+
+    # Commit 1: initial index of a.py and b.py
+    tree_c1 = [
+        {"path": "a.py", "type": "blob", "sha": "sha_a1"},
+        {"path": "b.py", "type": "blob", "sha": "sha_b1"},
+    ]
+    mock_get_sha.return_value = "commit_1"
+    mock_get_tree.return_value = tree_c1
+    mock_audit_filter.return_value = (
+        tree_c1,
+        IngestionAuditLog(repo_id="org/repo", branch="main", total_scanned=2, total_kept=2),
+    )
+    mock_get_content.side_effect = lambda o, r, p, t: f"# {p} v1\n"
+
+    indexer = IncrementalIndexer(vector_store=store, registry=registry, embedder_model=mock_model)
+    res1 = indexer.index_repository(owner="org", repo="repo", branch="main")
+    assert res1.status == "created"
+    assert store.count("org_repo") == 2
+
+    # Commit 2: b.py modified, c.py added; fetching both fails transiently
+    tree_c2 = [
+        {"path": "a.py", "type": "blob", "sha": "sha_a1"},
+        {"path": "b.py", "type": "blob", "sha": "sha_b2"},
+        {"path": "c.py", "type": "blob", "sha": "sha_c1"},
+    ]
+    mock_get_sha.return_value = "commit_2"
+    mock_get_tree.return_value = tree_c2
+    mock_audit_filter.return_value = (
+        tree_c2,
+        IngestionAuditLog(repo_id="org/repo", branch="main", total_scanned=3, total_kept=3),
+    )
+    mock_get_content.side_effect = RuntimeError("Transient 502 error")
+
+    res2 = indexer.index_repository(owner="org", repo="repo", branch="main")
+    assert res2.files_processed == 0
+    assert sorted(res2.skipped_files) == ["b.py", "c.py"]
+    assert res2.commit_sha == "commit_1"
+
+    # Existing chunks for b.py v1 must still be intact in the vector store
+    b_chunks = store.query("b.py", top_k=5, collection_name="org_repo", where={"path": "b.py"})
+    assert len(b_chunks) == 1
+    assert "v1" in b_chunks[0]["text"]
+
+    # Registry must NOT poison SHAs or advance commit_sha
+    meta_after_fail = registry.get("org/repo")
+    assert meta_after_fail.commit_sha == "commit_1"
+    assert meta_after_fail.file_shas == {"a.py": "sha_a1", "b.py": "sha_b1"}
+    assert "c.py" not in meta_after_fail.file_shas
+
+    # Retry at commit_2 when GitHub recovers: must NOT short-circuit and must retry b.py & c.py only
+    fetched_paths: list[str] = []
+
+    def recover_content(o, r, p, t):
+        fetched_paths.append(p)
+        return f"# {p} v2\n"
+
+    mock_get_content.side_effect = recover_content
+    res3 = indexer.index_repository(owner="org", repo="repo", branch="main")
+
+    assert res3.status == "updated"
+    assert res3.commit_sha == "commit_2"
+    assert sorted(fetched_paths) == ["b.py", "c.py"]
+    assert res3.files_processed == 2
+    assert store.count("org_repo") == 3
+
+    b_chunks_v2 = store.query("b.py", top_k=5, collection_name="org_repo", where={"path": "b.py"})
+    assert len(b_chunks_v2) == 1
+    assert "v2" in b_chunks_v2[0]["text"]
+
+    meta_recovered = registry.get("org/repo")
+    assert meta_recovered.commit_sha == "commit_2"
+    assert meta_recovered.file_shas == {
+        "a.py": "sha_a1",
+        "b.py": "sha_b2",
+        "c.py": "sha_c1",
+    }
+
+
+@patch("src.registry.incremental.get_latest_commit_sha")
+@patch("src.registry.incremental.get_repo_tree")
+@patch("src.registry.incremental.audit_filter_files")
+@patch("src.registry.incremental.get_file_content")
+def test_incremental_indexer_initial_partial_failure_retries_only_failed(
+    mock_get_content, mock_audit_filter, mock_get_tree, mock_get_sha
+):
+    """
+    Ensure initial index with a transient file fetch failure leaves commit_sha None
+    and omits only the failed file from file_shas so the next sync retries it.
+    """
+    from src.observability.models import IngestionAuditLog
+
+    store = InMemoryVectorStore()
+    registry = RepoRegistry(storage_path=None)
+    mock_model = MagicMock()
+    mock_model.encode.return_value = np.array([[0.1, 0.2]])
+
+    tree = [
+        {"path": "ok.py", "type": "blob", "sha": "sha_ok"},
+        {"path": "flaky.py", "type": "blob", "sha": "sha_flaky"},
+        {"path": "bin.dat", "type": "blob", "sha": "sha_bin"},
+    ]
+    mock_get_sha.return_value = "commit_init"
+    mock_get_tree.return_value = tree
+    mock_audit_filter.return_value = (
+        tree,
+        IngestionAuditLog(repo_id="org/proj", branch="main", total_scanned=3, total_kept=3),
+    )
+
+    def flaky_fetch(o, r, p, t):
+        if p == "ok.py":
+            return "ok = True\n"
+        if p == "bin.dat":
+            return None  # genuine binary file
+        raise TimeoutError("Read timed out")
+
+    mock_get_content.side_effect = flaky_fetch
+
+    indexer = IncrementalIndexer(vector_store=store, registry=registry, embedder_model=mock_model)
+    res1 = indexer.index_repository(owner="org", repo="proj", branch="main")
+
+    assert res1.commit_sha is None
+    assert sorted(res1.skipped_files) == ["bin.dat", "flaky.py"]
+    meta1 = registry.get("org/proj")
+    assert meta1.commit_sha is None
+    # ok.py and binary bin.dat are recorded; flaky.py is omitted for retry
+    assert meta1.file_shas == {"ok.py": "sha_ok", "bin.dat": "sha_bin"}
+
+    # Retry: only flaky.py should be fetched
+    retried_paths: list[str] = []
+
+    def fixed_fetch(o, r, p, t):
+        retried_paths.append(p)
+        return "flaky = False\n"
+
+    mock_get_content.side_effect = fixed_fetch
+    res2 = indexer.index_repository(owner="org", repo="proj", branch="main")
+
+    assert retried_paths == ["flaky.py"]
+    assert res2.commit_sha == "commit_init"
+    meta2 = registry.get("org/proj")
+    assert meta2.commit_sha == "commit_init"
+    assert meta2.file_shas == {"ok.py": "sha_ok", "bin.dat": "sha_bin", "flaky.py": "sha_flaky"}
+
+
+

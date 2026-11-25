@@ -129,6 +129,7 @@ def index_repository(
     # Step 3: Fetch contents and chunk
     files: list[dict[str, str]] = []
     skipped_files: list[str] = []
+    failed_files: set[str] = set()
 
     for item in filtered_items:
         path = item.get("path", "")
@@ -144,6 +145,7 @@ def index_repository(
         except Exception as e:
             logger.warning(f"Failed to fetch content for {path}: {e}")
             skipped_files.append(path)
+            failed_files.add(path)
 
     # Step 4-6: Chunk, embed, store
     result = index_files(
@@ -166,6 +168,11 @@ def index_repository(
     if registry is not None:
         from src.registry.models import RepositoryMetadata
         from datetime import datetime, timezone
+        recorded_shas = {
+            item["path"]: item.get("sha", "")
+            for item in filtered_items
+            if "path" in item and item["path"] not in failed_files
+        }
         registry.register(
             RepositoryMetadata(
                 owner=owner,
@@ -173,9 +180,9 @@ def index_repository(
                 collection_name=collection_name,
                 branch=branch,
                 indexed_at=datetime.now(timezone.utc).isoformat(),
-                file_count=len(filtered_items),
+                file_count=len(recorded_shas),
                 chunk_count=result.get("chunks_stored", 0),
-                file_shas={item["path"]: item.get("sha", "") for item in filtered_items if "path" in item},
+                file_shas=recorded_shas,
                 status="ready",
                 metadata={"audit_log": audit_log.to_dict()},
             )

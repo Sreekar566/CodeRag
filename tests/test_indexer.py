@@ -439,3 +439,39 @@ def test_index_repository_custom_collection_name(
 
     assert stats["collection"] == "Custom_Collection_Name"
     assert store.count("Custom_Collection_Name") == 1
+
+
+@patch("src.storage.indexer.get_repo_tree")
+@patch("src.storage.indexer.get_file_content")
+def test_index_repository_excludes_failed_files_from_registry_shas(
+    mock_get_content, mock_get_tree
+):
+    mock_get_tree.return_value = [
+        {"path": "ok.py", "type": "blob", "size": 50, "sha": "sha_ok"},
+        {"path": "fail.py", "type": "blob", "size": 50, "sha": "sha_fail"},
+    ]
+
+    def fake_content(owner, repo, path, token):
+        if path == "ok.py":
+            return "ok = 1\n"
+        raise RuntimeError("Rate limit")
+
+    mock_get_content.side_effect = fake_content
+
+    mock_model = MagicMock()
+    mock_model.encode.return_value = np.array([[0.1, 0.2]])
+    store = InMemoryVectorStore()
+    mock_registry = MagicMock()
+
+    stats = index_repository(
+        owner="testowner",
+        repo="testrepo",
+        vector_store=store,
+        registry=mock_registry,
+        embedder_model=mock_model,
+    )
+
+    assert stats["skipped_files"] == ["fail.py"]
+    meta = mock_registry.register.call_args[0][0]
+    assert meta.file_shas == {"ok.py": "sha_ok"}
+    assert meta.file_count == 1
