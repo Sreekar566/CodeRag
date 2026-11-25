@@ -3,11 +3,12 @@ FastAPI application factory and middleware configuration.
 """
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 import logging
 from typing import Any
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from src.api.middleware import RequestTracingMiddleware
 from src.api.routes import (
@@ -22,6 +23,36 @@ from src.config import get_settings
 from src.observability.logging import setup_logging
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """
+    Manage application startup and shutdown lifecycle events.
+    Re-applies unified logging (including uvicorn loggers) and emits safe startup metadata.
+    """
+    settings = get_settings()
+    setup_logging(force=True)
+    logger.info(
+        f"Starting {settings.app_name} v{settings.app_version} "
+        f"(llm_provider={settings.effective_llm_provider}, log_format={settings.log_format})",
+        extra={
+            "event": "startup",
+            "version": settings.app_version,
+            "llm_provider": settings.effective_llm_provider,
+            "embedding_model": settings.embedding_model,
+            "log_level": settings.log_level,
+            "log_format": settings.log_format,
+            "chroma_persist_directory": settings.chroma_persist_directory,
+        },
+    )
+    try:
+        yield
+    finally:
+        logger.info(
+            f"Shutting down {settings.app_name} v{settings.app_version}",
+            extra={"event": "shutdown", "version": settings.app_version},
+        )
 
 
 def create_app() -> FastAPI:
@@ -43,6 +74,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
+        lifespan=_lifespan,
     )
 
     # Request correlation, access logging, and process timing middleware (inner)

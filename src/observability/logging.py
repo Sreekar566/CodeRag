@@ -18,6 +18,43 @@ from src.config import get_settings
 DEFAULT_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(request_id)s%(name)s: %(message)s"
 DEFAULT_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
+_STANDARD_RECORD_ATTRS: frozenset[str] = frozenset({
+    "args",
+    "asctime",
+    "color_message",
+    "created",
+    "exc_info",
+    "exc_text",
+    "filename",
+    "funcName",
+    "levelname",
+    "levelno",
+    "lineno",
+    "message",
+    "module",
+    "msecs",
+    "msg",
+    "name",
+    "pathname",
+    "process",
+    "processName",
+    "relativeCreated",
+    "request_id",
+    "request_id_raw",
+    "stack_info",
+    "taskName",
+    "thread",
+    "threadName",
+})
+
+_UVICORN_LOGGERS: tuple[str, ...] = ("uvicorn", "uvicorn.error", "uvicorn.access")
+_NOISY_THIRD_PARTY_LOGGERS: tuple[str, ...] = (
+    "httpx",
+    "httpcore",
+    "urllib3",
+    "chromadb.telemetry.product.posthog",
+)
+
 request_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
     "request_id", default=""
 )
@@ -54,7 +91,8 @@ class RequestIdFilter(logging.Filter):
 class JsonLogFormatter(logging.Formatter):
     """
     Structured JSON log formatter for cloud logging and container observability.
-    Serializes timestamp, log level, logger name, message, request ID, and stack traces.
+    Serializes timestamp, log level, logger name, message, request ID,
+    extra structured context fields, and stack traces.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -67,9 +105,35 @@ class JsonLogFormatter(logging.Formatter):
         }
         if req_id:
             payload["request_id"] = req_id
+        if record.levelno >= logging.WARNING:
+            payload["source"] = f"{record.module}:{record.lineno}"
+
+        for key, value in record.__dict__.items():
+            if key not in _STANDARD_RECORD_ATTRS and not key.startswith("_"):
+                payload[key] = value
+
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
-        return json.dumps(payload)
+        elif record.exc_text:
+            payload["exception"] = record.exc_text
+
+        return json.dumps(payload, default=str)
+
+
+def _configure_sub_loggers(resolved_level: int) -> None:
+    """
+    Route ASGI server logs through the root CodeRag handler and dampen
+    chatty third-party HTTP/telemetry libraries at INFO/DEBUG levels.
+    """
+    for logger_name in _UVICORN_LOGGERS:
+        uv_logger = logging.getLogger(logger_name)
+        uv_logger.handlers.clear()
+        uv_logger.propagate = True
+        uv_logger.setLevel(resolved_level)
+
+    noisy_level = max(resolved_level, logging.WARNING)
+    for logger_name in _NOISY_THIRD_PARTY_LOGGERS:
+        logging.getLogger(logger_name).setLevel(noisy_level)
 
 
 _LOGGING_CONFIGURED = False
@@ -82,7 +146,7 @@ def setup_logging(
 ) -> None:
     """
     Configure application root and package loggers with standard formatting,
-    request ID correlation filters, and log level resolution from environment.
+    request ID correlation filters, ASGI logger unification, and log level resolution.
 
     Args:
         level: Explicit log level (e.g. 'DEBUG', 'INFO') or int. Defaults to LOG_LEVEL env var or 'INFO'.
@@ -130,4 +194,5 @@ def setup_logging(
         )
 
     root_logger.addHandler(stream_handler)
+    _configure_sub_loggers(resolved_level)
     _LOGGING_CONFIGURED = True

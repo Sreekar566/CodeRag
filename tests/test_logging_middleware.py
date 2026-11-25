@@ -262,3 +262,109 @@ def test_ui_api_client_captures_request_id():
 
         assert exc_info.value.request_id == "backend-trace-555"
         assert client.last_request_id == "backend-trace-555"
+
+
+def test_json_log_formatter_includes_extra_and_source_on_warning():
+    """Verify JsonLogFormatter serializes extra context fields and source location for >= WARNING."""
+    formatter = JsonLogFormatter()
+    record = logging.LogRecord(
+        name="src.api.access",
+        level=logging.WARNING,
+        pathname="middleware.py",
+        lineno=72,
+        msg="Slow request",
+        args=(),
+        exc_info=None,
+    )
+    record.http_method = "POST"
+    record.status_code = 504
+    record.custom_obj = object()
+
+    data = json.loads(formatter.format(record))
+    assert data["http_method"] == "POST"
+    assert data["status_code"] == 504
+    assert "custom_obj" in data
+    assert data["source"] == "middleware:72"
+
+
+def test_setup_logging_unifies_uvicorn_and_dampens_noisy_loggers():
+    """Verify setup_logging routes uvicorn loggers to root and sets noisy third-party loggers >= WARNING."""
+    uv_error = logging.getLogger("uvicorn.error")
+    uv_error.addHandler(logging.StreamHandler())
+    uv_error.propagate = False
+
+    setup_logging(level="INFO", log_format="json", force=True)
+
+    try:
+        for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+            uv_logger = logging.getLogger(name)
+            assert uv_logger.handlers == []
+            assert uv_logger.propagate is True
+            assert uv_logger.level == logging.INFO
+
+        assert logging.getLogger("httpx").level >= logging.WARNING
+        assert logging.getLogger("httpcore").level >= logging.WARNING
+        assert logging.getLogger("urllib3").level >= logging.WARNING
+    finally:
+        setup_logging(level="INFO", log_format="text", force=True)
+
+
+def test_middleware_attaches_structured_extra_fields(caplog):
+    """Verify RequestTracingMiddleware attaches http_method, http_path, status_code, and duration_ms."""
+    test_app = FastAPI()
+    test_app.add_middleware(RequestTracingMiddleware)
+
+    @test_app.get("/items")
+    def list_items():
+        return {"items": []}
+
+    client = TestClient(test_app)
+    with caplog.at_level(logging.INFO, logger="src.api.access"):
+        resp = client.get("/items", headers={REQUEST_ID_HEADER: "extra-fields-001"})
+
+    assert resp.status_code == 200
+    completed = [
+        r for r in caplog.records
+        if r.name == "src.api.access" and "Completed GET /items" in r.message
+    ]
+    assert len(completed) == 1
+    rec = completed[0]
+    assert getattr(rec, "http_method", None) == "GET"
+    assert getattr(rec, "http_path", None) == "/items"
+    assert getattr(rec, "status_code", None) == 200
+    assert isinstance(getattr(rec, "duration_ms", None), float)
+
+
+def test_app_lifespan_emits_startup_and_shutdown_logs(caplog, monkeypatch):
+    """Verify FastAPI lifespan logs structured startup and shutdown events without secrets."""
+    monkeypatch.setenv("GEMINI_API_KEY", "super-secret-gemini-key")
+    monkeypatch.setenv("LOG_FORMAT", "text")
+    app = create_app()
+
+    with caplog.at_level(logging.INFO, logger="src.api.app"):
+        with TestClient(app) as client:
+            resp = client.get("/health/live")
+            assert resp.status_code == 200
+
+    messages = [r.message for r in caplog.records if r.name == "src.api.app"]
+    assert any("Starting " in m for m in messages)
+    assert any("Shutting down " in m for m in messages)
+    assert all("super-secret-gemini-key" not in m for m in messages)
+    setup_logging(level="INFO", log_format="text", force=True)
+
+
+def test_api_main_configures_uvicorn_without_duplicate_access_logs():
+    """Verify src.api.main passes log_config=None and access_log=False to uvicorn.run."""
+    from src.api.main import main as api_main
+
+    with patch("sys.argv", ["src.api.main", "--host", "127.0.0.1", "--port", "9001"]), \
+         patch("uvicorn.run") as mock_run:
+        api_main()
+
+    mock_run.assert_called_once()
+    kwargs = mock_run.call_args.kwargs
+    assert kwargs["host"] == "127.0.0.1"
+    assert kwargs["port"] == 9001
+    assert kwargs["log_config"] is None
+    assert kwargs["access_log"] is False
+    setup_logging(level="INFO", log_format="text", force=True)

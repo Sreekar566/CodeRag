@@ -77,6 +77,7 @@ def test_docker_entrypoint_executable_and_handlers() -> None:
 
     content = entrypoint_path.read_text()
     assert "api)" in content, "Entrypoint must support 'api' command"
+    assert "--no-access-log" in content, "Entrypoint 'api' command should disable duplicate uvicorn access logs"
     assert "ui)" in content, "Entrypoint must support 'ui' command"
     assert "eval)" in content, "Entrypoint must support 'eval' command"
     assert "cli)" in content, "Entrypoint must support 'cli' command"

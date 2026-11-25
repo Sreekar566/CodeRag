@@ -43,8 +43,14 @@ class RequestTracingMiddleware(BaseHTTPMiddleware):
         start_time = time.perf_counter()
 
         client_host = request.client.host if request.client else "unknown"
+        request_extra = {
+            "http_method": request.method,
+            "http_path": request.url.path,
+            "client_ip": client_host,
+        }
         logger.info(
-            f"Incoming request {request.method} {request.url.path} from {client_host}"
+            f"Incoming request {request.method} {request.url.path} from {client_host}",
+            extra=request_extra,
         )
 
         try:
@@ -56,6 +62,11 @@ class RequestTracingMiddleware(BaseHTTPMiddleware):
                     f"Unhandled exception during {request.method} {request.url.path} "
                     f"after {duration_ms:.2f}ms: {exc}",
                     exc_info=True,
+                    extra={
+                        **request_extra,
+                        "status_code": 500,
+                        "duration_ms": round(duration_ms, 2),
+                    },
                 )
                 response = JSONResponse(
                     status_code=500,
@@ -71,7 +82,12 @@ class RequestTracingMiddleware(BaseHTTPMiddleware):
 
             logger.info(
                 f"Completed {request.method} {request.url.path} -> {response.status_code} "
-                f"in {duration_ms:.2f}ms"
+                f"in {duration_ms:.2f}ms",
+                extra={
+                    **request_extra,
+                    "status_code": response.status_code,
+                    "duration_ms": round(duration_ms, 2),
+                },
             )
 
             return response

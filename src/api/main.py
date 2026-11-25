@@ -9,10 +9,12 @@ import argparse
 import uvicorn
 
 from src.config import get_settings
+from src.observability.logging import setup_logging
 
 
 def main() -> None:
     settings = get_settings()
+    setup_logging(force=True)
     parser = argparse.ArgumentParser(description="AI Codebase Intelligence Platform API Server")
     parser.add_argument("--host", default=settings.host, help=f"Host interface to bind to (default: {settings.host})")
     parser.add_argument("--port", type=int, default=settings.port, help=f"Port to listen on (default: {settings.port})")
@@ -27,6 +29,9 @@ def main() -> None:
         port=args.port,
         reload=args.reload,
         workers=args.workers,
+        log_config=None,
+        access_log=False,
+        log_level=settings.log_level.lower(),
     )
 
 
