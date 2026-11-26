@@ -352,6 +352,81 @@ def test_rag_engine_empty_retrieval_records_telemetry():
     assert summary.total_queries == 1
 
 
+def test_rag_engine_llm_failure_records_error_telemetry():
+    """Verify failed LLM generation records error telemetry and partial stage latencies."""
+    mock_store = MagicMock()
+    mock_store.query.return_value = [
+        {
+            "id": "c1",
+            "text": "def login(): pass",
+            "path": "app/auth.py",
+            "start_line": 1,
+            "end_line": 2,
+            "language": "python",
+            "similarity": 0.9,
+        }
+    ]
+    failing_llm = MagicMock()
+    failing_llm.model = "gemini-3.8-flash"
+    failing_llm.generate.side_effect = RuntimeError("LLM rate limit exceeded")
+
+    collector = get_telemetry_collector()
+    collector.clear()
+
+    engine = RAGEngine(
+        vector_store=mock_store,
+        llm_provider=failing_llm,
+        default_collection="test_col",
+    )
+
+    with pytest.raises(RuntimeError, match="LLM rate limit exceeded"):
+        engine.answer_question("How does login work?", collection_name="test_col")
+
+    summary = collector.get_summary()
+    assert summary.total_queries == 1
+    assert summary.error_count == 1
+    assert summary.total_cost_usd == 0.0
+
+    recent = collector.get_recent_queries(limit=1)
+    assert len(recent) == 1
+    assert recent[0].error == "LLM rate limit exceeded"
+    assert recent[0].model == "gemini-3.8-flash"
+    assert recent[0].retrieved_count == 1
+    assert recent[0].selected_count == 1
+    assert "retrieval" in recent[0].stage_latencies_ms
+    assert "assembly_rerank" in recent[0].stage_latencies_ms
+    assert "generation" not in recent[0].stage_latencies_ms
+
+
+def test_rag_engine_retrieval_failure_records_error_telemetry():
+    """Verify failed retrieval records error telemetry with exception class fallback when message is empty."""
+    mock_store = MagicMock()
+    mock_store.query.side_effect = ConnectionError()
+    fake_llm = FakeLLMProvider()
+
+    collector = get_telemetry_collector()
+    collector.clear()
+
+    engine = RAGEngine(
+        vector_store=mock_store,
+        llm_provider=fake_llm,
+        default_collection="test_col",
+    )
+
+    with pytest.raises(ConnectionError):
+        engine.answer_question("Where is config?", collection_name="test_col")
+
+    summary = collector.get_summary()
+    assert summary.total_queries == 1
+    assert summary.error_count == 1
+
+    recent = collector.get_recent_queries(limit=1)
+    assert len(recent) == 1
+    assert recent[0].error == "ConnectionError"
+    assert recent[0].retrieved_count == 0
+    assert recent[0].selected_count == 0
+
+
 # ============================================================================
 # 6. REST API Observability Endpoints Tests
 # ============================================================================

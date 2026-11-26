@@ -443,85 +443,104 @@ class RAGEngine:
             )
 
         overall_timer = StageTimer().start()
+        target_specs: list[tuple[str, str]] = []
+        raw_chunks: list[dict[str, Any]] = []
+        assembly_result: ContextAssemblyResult | None = None
+        stage_latencies: dict[str, float] = {}
 
-        # Step 0: Resolve target repositories / collections
-        target_specs = self._resolve_target_specs(
-            repo=repo,
-            repos=repos,
-            collection_name=collection_name,
-            collections=collections,
-        )
-        tag_repo = len(target_specs) > 1 or repo is not None or repos is not None
+        try:
+            # Step 0: Resolve target repositories / collections
+            target_specs = self._resolve_target_specs(
+                repo=repo,
+                repos=repos,
+                collection_name=collection_name,
+                collections=collections,
+            )
+            tag_repo = len(target_specs) > 1 or repo is not None or repos is not None
 
-        # Step 1: Semantic retrieval across all targets
-        raw_chunks, retrieval_ms = self._retrieve_chunks(
-            query=trimmed_question,
-            target_specs=target_specs,
-            top_k=top_k,
-            where=where,
-            tag_repo=tag_repo,
-        )
-
-        # Step 2: Handle empty retrieval
-        if not raw_chunks:
-            return self._build_empty_response(
+            # Step 1: Semantic retrieval across all targets
+            raw_chunks, retrieval_ms = self._retrieve_chunks(
                 query=trimmed_question,
                 target_specs=target_specs,
-                model_name=model_name,
-                retrieval_ms=retrieval_ms,
-                overall_timer=overall_timer,
+                top_k=top_k,
+                where=where,
+                tag_repo=tag_repo,
             )
+            stage_latencies["retrieval"] = round(retrieval_ms, 2)
 
-        # Step 3: Context assembly within token budget & re-ranking
-        budget = max_context_tokens if max_context_tokens is not None else self.max_context_tokens
-        do_rerank = rerank if rerank is not None else self.rerank
-        do_merge = merge_overlapping if merge_overlapping is not None else self.merge_overlapping
+            # Step 2: Handle empty retrieval
+            if not raw_chunks:
+                return self._build_empty_response(
+                    query=trimmed_question,
+                    target_specs=target_specs,
+                    model_name=model_name,
+                    retrieval_ms=retrieval_ms,
+                    overall_timer=overall_timer,
+                )
 
-        assembly_result, assembly_ms = self._assemble_context(
-            query=trimmed_question,
-            raw_chunks=raw_chunks,
-            budget=budget,
-            rerank=do_rerank,
-            merge_overlapping=do_merge,
-        )
+            # Step 3: Context assembly within token budget & re-ranking
+            budget = max_context_tokens if max_context_tokens is not None else self.max_context_tokens
+            do_rerank = rerank if rerank is not None else self.rerank
+            do_merge = merge_overlapping if merge_overlapping is not None else self.merge_overlapping
 
-        # Step 4 & 5: Construct prompt and generate LLM response
-        llm_response, generation_ms = self._generate_answer(
-            query=trimmed_question,
-            formatted_context=assembly_result.formatted_context,
-            system_instruction=system_instruction,
-            temperature=temperature,
-            **kwargs,
-        )
+            assembly_result, assembly_ms = self._assemble_context(
+                query=trimmed_question,
+                raw_chunks=raw_chunks,
+                budget=budget,
+                rerank=do_rerank,
+                merge_overlapping=do_merge,
+            )
+            stage_latencies["assembly_rerank"] = round(assembly_ms, 2)
 
-        # Step 6: Extract and reconcile citations
-        citations, citations_ms = self._resolve_citations(
-            answer_text=llm_response.content,
-            selected_chunks=assembly_result.chunks,
-        )
+            # Step 4 & 5: Construct prompt and generate LLM response
+            llm_response, generation_ms = self._generate_answer(
+                query=trimmed_question,
+                formatted_context=assembly_result.formatted_context,
+                system_instruction=system_instruction,
+                temperature=temperature,
+                **kwargs,
+            )
+            stage_latencies["generation"] = round(generation_ms, 2)
 
-        total_duration_ms = overall_timer.stop()
+            # Step 6: Extract and reconcile citations
+            citations, citations_ms = self._resolve_citations(
+                answer_text=llm_response.content,
+                selected_chunks=assembly_result.chunks,
+            )
+            stage_latencies["citations"] = round(citations_ms, 2)
 
-        stage_latencies = {
-            "retrieval": round(retrieval_ms, 2),
-            "assembly_rerank": round(assembly_ms, 2),
-            "generation": round(generation_ms, 2),
-            "citations": round(citations_ms, 2),
-        }
+            total_duration_ms = overall_timer.stop()
 
-        # Step 7: Record telemetry and assemble final response
-        return self._record_telemetry_and_build_response(
-            query=trimmed_question,
-            target_specs=target_specs,
-            raw_chunks=raw_chunks,
-            assembly_result=assembly_result,
-            llm_response=llm_response,
-            citations=citations,
-            stage_latencies=stage_latencies,
-            total_duration_ms=total_duration_ms,
-            rerank=do_rerank,
-            budget=budget,
-        )
+            # Step 7: Record telemetry and assemble final response
+            return self._record_telemetry_and_build_response(
+                query=trimmed_question,
+                target_specs=target_specs,
+                raw_chunks=raw_chunks,
+                assembly_result=assembly_result,
+                llm_response=llm_response,
+                citations=citations,
+                stage_latencies=stage_latencies,
+                total_duration_ms=total_duration_ms,
+                rerank=do_rerank,
+                budget=budget,
+            )
+        except Exception as exc:
+            total_duration_ms = overall_timer.stop()
+            error_msg = str(exc).strip() or exc.__class__.__name__
+            telemetry = QueryTelemetry(
+                question=trimmed_question,
+                target_repos=[t[0] for t in target_specs],
+                model=str(model_name),
+                stage_latencies_ms=stage_latencies,
+                total_duration_ms=total_duration_ms,
+                context_tokens=assembly_result.total_tokens if assembly_result is not None else None,
+                retrieved_count=len(raw_chunks),
+                selected_count=len(assembly_result.chunks) if assembly_result is not None else 0,
+                citations_count=0,
+                error=error_msg,
+            )
+            get_telemetry_collector().record_query(telemetry)
+            raise
 
     def answer_multi_repo(
         self,
